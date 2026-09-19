@@ -26,7 +26,7 @@ export default function Reveal({
           }
         }
       },
-      { threshold: 0.12 }
+      { threshold: 0.01, rootMargin: "0px 0px -50px 0px" }
     );
     io.observe(el);
     return () => io.disconnect();
