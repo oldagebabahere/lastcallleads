@@ -6,7 +6,7 @@ import SubscribeForm from "@/components/subscribe-form";
 import { Footer, LeadRow, Nav } from "@/components/ui";
 import { getRecentEvents, getSiteStats } from "@/lib/queries";
 
-export const revalidate = 900;
+export const dynamic = "force-dynamic";
 
 // Fallback counts shown before the first successful sweep lands.
 const STATE_BASELINES: Record<string, string> = {

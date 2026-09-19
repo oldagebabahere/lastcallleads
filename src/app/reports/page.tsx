@@ -8,7 +8,7 @@ import { events } from "@/db/schema";
 import Reveal from "@/components/reveal";
 import { Footer, Nav } from "@/components/ui";
 
-export const revalidate = 1800;
+export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "Weekly liquor market intelligence reports — Texas & New York",

@@ -10,7 +10,7 @@ import { Footer, LeadRow, Nav } from "@/components/ui";
 import { embargoCutoff, maskName } from "@/lib/queries";
 import { BRAND } from "@/lib/brand";
 
-export const revalidate = 900;
+export const dynamic = "force-dynamic";
 
 const STATE_META: Record<
   string,

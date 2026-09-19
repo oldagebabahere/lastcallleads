@@ -10,7 +10,7 @@ import SubscribeForm from "@/components/subscribe-form";
 import { Footer, Nav } from "@/components/ui";
 import { citySlug } from "@/lib/queries";
 
-export const revalidate = 1800;
+export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "California liquor-license filings — bars & restaurants opening soon",

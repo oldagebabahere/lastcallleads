@@ -10,7 +10,7 @@ import { EventBadge, Footer, Nav, StatePill, fmtDate } from "@/components/ui";
 import { embargoCutoff, maskName } from "@/lib/queries";
 import { BRAND } from "@/lib/brand";
 
-export const revalidate = 1800;
+export const dynamic = "force-dynamic";
 
 const REPORT_CONFIG: Record<
   string,

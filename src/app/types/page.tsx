@@ -8,7 +8,7 @@ import { licenses } from "@/db/schema";
 import { Footer, Nav } from "@/components/ui";
 import { TYPE_LIBRARY } from "@/lib/license-types";
 
-export const revalidate = 3600;
+export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "Texas liquor license types explained — MB, FB, LH, P and more",

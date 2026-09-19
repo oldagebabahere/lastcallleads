@@ -9,7 +9,7 @@ import { events, licenses } from "@/db/schema";
 import { Footer, LeadRow, Nav, StatePill, fmtDate } from "@/components/ui";
 import { TYPE_LIBRARY } from "@/lib/license-types";
 
-export const revalidate = 3600;
+export const dynamic = "force-dynamic";
 
 export function generateStaticParams() {
   return TYPE_LIBRARY.map((t) => ({ slug: t.slug }));

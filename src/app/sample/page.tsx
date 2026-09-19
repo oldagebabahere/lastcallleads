@@ -10,7 +10,7 @@ import SubscribeForm from "@/components/subscribe-form";
 import { Footer, Nav } from "@/components/ui";
 import { scoreFiling } from "@/lib/lead-score";
 
-export const revalidate = 900;
+export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "See a real digest — what lands in your inbox every morning",

@@ -8,7 +8,7 @@ import { events, licenses } from "@/db/schema";
 import Reveal from "@/components/reveal";
 import { Footer, Nav } from "@/components/ui";
 
-export const revalidate = 1800;
+export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "Liquor-market data desk — live stats from public registries",

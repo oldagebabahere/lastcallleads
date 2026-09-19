@@ -10,7 +10,7 @@ import SubscribeForm from "@/components/subscribe-form";
 import { Footer, Nav } from "@/components/ui";
 import { maskName } from "@/lib/queries";
 
-export const revalidate = 900;
+export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "Free snapshot: new bars & restaurants filing this week (TX & NY)",

@@ -12,7 +12,7 @@ import { events, licenses } from "@/db/schema";
 import { Footer, Nav } from "@/components/ui";
 import { BRAND } from "@/lib/brand";
 
-export const revalidate = 1800;
+export const dynamic = "force-dynamic";
 
 const DESKS: Record<string, { code: string; name: string }> = {
   texas: { code: "TX", name: "Texas" },

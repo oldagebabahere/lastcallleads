@@ -9,7 +9,7 @@ import Reveal from "@/components/reveal";
 import { Footer, Nav } from "@/components/ui";
 import { citySlug } from "@/lib/queries";
 
-export const revalidate = 600;
+export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title:

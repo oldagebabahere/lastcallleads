@@ -14,7 +14,7 @@ import { EventBadge, Footer, Nav, StatePill } from "@/components/ui";
 import { citySlug, embargoCutoff, maskName, timeAgo } from "@/lib/queries";
 import { BRAND } from "@/lib/brand";
 
-export const revalidate = 1800;
+export const dynamic = "force-dynamic";
 
 const STATE_NAMES: Record<string, string> = {
   TX: "Texas",
