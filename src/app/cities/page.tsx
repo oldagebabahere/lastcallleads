@@ -5,7 +5,6 @@ import { desc, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { ensureSchema } from "@/db/bootstrap";
 import { events, licenses } from "@/db/schema";
-import Reveal from "@/components/reveal";
 import { Footer, Nav } from "@/components/ui";
 import { citySlug } from "@/lib/queries";
 
@@ -126,8 +125,7 @@ export default async function CitiesIndexPage() {
         )}
 
         {Array.from(byState.entries()).map(([state, items]) => (
-          <Reveal key={state}>
-            <section id={`state-${state}`} className="mt-12">
+            <section key={state} id={`state-${state}`} className="mt-12">
               <h2 className="font-display text-2xl font-medium text-cream">
                 {STATE_NAMES[state] ?? state}
               </h2>
@@ -152,7 +150,6 @@ export default async function CitiesIndexPage() {
                 ))}
               </div>
             </section>
-          </Reveal>
         ))}
 
         <div className="mt-16 border-t border-line pt-8 text-sm text-smoke">
