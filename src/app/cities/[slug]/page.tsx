@@ -114,7 +114,8 @@ export default async function CityPage({
   const loaded = await loadCity(parsed.city, state);
   const rows = loaded.rows;
   const fromRegister = loaded.fromRegister;
-  if (rows.length === 0) notFound(); // thin pages stay out of Google
+  // Don't 404 — show a city page even if no filings yet (data pull may not have run)
+  const hasData = rows.length > 0;
 
   const cut = embargoCutoff();
   const thirtyDaysAgo = Date.now() - 30 * 86_400_000;
@@ -194,7 +195,12 @@ export default async function CityPage({
           </span>
         </div>
 
-        <div className="mt-10 overflow-hidden rounded-xl border border-line">
+        {!hasData && (
+          <div className="mt-10 rounded-xl border border-line bg-panel px-6 py-12 text-center text-sm text-smoke">
+            No filings recorded yet for {city}, {state}. Check back after the next daily data pull (runs at 5:30 AM IST).
+          </div>
+        )}
+        <div className={`mt-10 overflow-hidden rounded-xl border border-line ${!hasData ? "hidden" : ""}`}>
           {rows.map((e) => {
             const locked = e.occurredAt ? e.occurredAt.getTime() > cut.getTime() : false;
             const name = locked
