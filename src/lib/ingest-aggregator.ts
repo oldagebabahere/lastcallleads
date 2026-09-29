@@ -15,7 +15,7 @@ import { db } from "@/db";
 import { ensureSchema } from "@/db/bootstrap";
 import { events, licenses } from "@/db/schema";
 import type { NormalizedRecord } from "./sources";
-import { clean, cleanNumberId, cleanZip, safeDate } from "./sources";
+import { clean, cleanNumberId, cleanZip, normalizeCity, safeDate } from "./sources";
 import { txTypeName } from "./ingest-tx";
 import { and, eq, inArray } from "drizzle-orm";
 
@@ -48,7 +48,7 @@ const TX_PENDING_SPEC: StateSpec = {
       ownerName: clean(rec.owner),
       phone: null,
       address: clean(rec.address),
-      city: clean(rec.city),
+      city: normalizeCity(rec.city),
       zip: cleanZip(rec.zip),
       county: clean(rec.county),
       filedAt: safeDate(rec.submission_date),
@@ -85,7 +85,7 @@ const TX_ACTIVE_SPEC: StateSpec = {
       ownerName: clean(rec.owner),
       phone: clean(rec.phone),
       address: clean(rec.address),
-      city: clean(rec.city),
+      city: normalizeCity(rec.city),
       zip: cleanZip(rec.zip),
       county: clean(rec.county),
       filedAt: safeDate(rec.original_issue_date),
@@ -117,7 +117,7 @@ const NY_PENDING_SPEC: StateSpec = {
       ownerName: clean(rec.legalname),
       phone: null,
       address: clean(rec.actual_address_of_premises),
-      city: clean(rec.city),
+      city: normalizeCity(rec.city),
       zip: cleanZip(rec.zip_code),
       county: clean(rec.premises_county),
       filedAt: safeDate(rec.received_date),
@@ -148,7 +148,7 @@ const NY_ACTIVE_SPEC: StateSpec = {
       ownerName: clean(rec.legalname),
       phone: null,
       address: clean(rec.actualaddressofpremises),
-      city: clean(rec.city),
+      city: normalizeCity(rec.city),
       zip: cleanZip(rec.zipcode),
       county: clean(rec.premisescounty),
       filedAt: safeDate(rec.originalissuedate),
@@ -184,7 +184,7 @@ const CA_SPEC: StateSpec = {
       ownerName: clean(rec.licensee) ?? clean(rec.owner) ?? clean(rec.legal_name),
       phone: null,
       address: clean(rec.premise_addr) ?? clean(rec.premises_address) ?? clean(rec.address),
-      city: clean(rec.premise_city) ?? clean(rec.city),
+      city: normalizeCity(rec.premise_city) ?? normalizeCity(rec.city),
       zip: cleanZip(rec.premise_zip) ?? cleanZip(rec.zip),
       county: clean(rec.premise_county) ?? clean(rec.county),
       filedAt: safeDate(rec.issue_date) ?? safeDate(rec.original_issue_date),
@@ -217,7 +217,7 @@ const MO_SPEC: StateSpec = {
       ownerName: clean(rec.licensee),
       phone: null,
       address: [clean(rec.street_number), clean(rec.street)].filter(Boolean).join(" ") || null,
-      city: clean(rec.city),
+      city: normalizeCity(rec.city),
       zip: cleanZip(rec.zip_code),
       county: clean(rec.county),
       filedAt: safeDate(rec.original_date),
@@ -249,7 +249,7 @@ const CO_SPEC: StateSpec = {
       ownerName: clean(rec.licensee_name),
       phone: null,
       address: clean(rec.street_address),
-      city: clean(rec.city),
+      city: normalizeCity(rec.city),
       zip: cleanZip(rec.zip),
       county: null,
       filedAt: safeDate(rec.issue_date),
@@ -281,7 +281,7 @@ const CT_SPEC: StateSpec = {
       ownerName: clean(rec.name),
       phone: null,
       address: clean(rec.address),
-      city: clean(rec.city),
+      city: normalizeCity(rec.city),
       zip: cleanZip(rec.zip),
       county: clean(rec.county) ?? clean(rec.town),
       filedAt: safeDate(rec.issuedate),
@@ -313,7 +313,7 @@ const WA_SPEC: StateSpec = {
       ownerName: clean(rec.tradename),
       phone: clean(rec.dayphone),
       address: clean(rec.streetaddress),
-      city: clean(rec.city),
+      city: normalizeCity(rec.city),
       zip: cleanZip(rec.zipcode),
       county: clean(rec.countycode),
       filedAt: null,
@@ -349,7 +349,7 @@ const IL_SPEC: StateSpec = {
       ownerName: clean(rec.legal_name),
       phone: null,
       address: clean(rec.address),
-      city: clean(rec.city) ?? "Chicago",
+      city: normalizeCity(rec.city) ?? "Chicago",
       zip,
       county: clean(rec.neighborhood) ?? clean(rec.community_area_name) ?? "Cook",
       filedAt: safeDate(rec.license_start_date) ?? safeDate(rec.date_issued),
@@ -477,7 +477,7 @@ const MD_SPEC: StateSpec = {
       ownerName: clean(rec.licensee_name),
       phone: null,
       address: clean(rec.street),
-      city: clean(rec.city),
+      city: normalizeCity(rec.city),
       zip: cleanZip(rec.zip),
       county: "Montgomery",
       filedAt: null,
@@ -549,7 +549,7 @@ const OR_LICENSES_SPEC: StateSpec = {
   map: (rec) => {
     const licNo = clean(rec.license_number);
     if (!licNo) return null;
-    let city: string | null = clean(rec.city);
+    let city: string | null = normalizeCity(rec.city);
     let zip: string | null = null;
     const addr = clean(rec.physical_address);
     if (addr) {
