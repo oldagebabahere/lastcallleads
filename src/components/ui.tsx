@@ -82,9 +82,6 @@ export function Nav() {
           <Link href="/#pricing" className="transition-colors hover:text-cream">
             PRICING
           </Link>
-          <Link href="/partner" className="transition-colors hover:text-amber">
-            PARTNER
-          </Link>
         </nav>
         <Link
           href="/#pricing"
@@ -120,7 +117,6 @@ export function Footer() {
           <Link href="/insights" className="hover:text-cream">DATA DESK</Link>
           <Link href="/types" className="hover:text-cream">LICENSE TYPES</Link>
           <Link href="/guides" className="hover:text-cream">GUIDES</Link>
-          <Link href="/partner" className="hover:text-amber">PARTNER</Link>
           <Link href="/about" className="hover:text-cream">ABOUT</Link>
           <Link href="/contact" className="hover:text-cream">CONTACT</Link>
           <Link href="/setup" className="hover:text-cream">SYSTEM</Link>
