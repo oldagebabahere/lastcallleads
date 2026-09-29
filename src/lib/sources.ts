@@ -60,6 +60,16 @@ export function clean(value: unknown): string | null {
   return s.length ? s : null;
 }
 
+// Fixes duplicate cities caused by inconsistent casing across source feeds
+// ("HOUSTON" vs "Houston" vs "houston" all become "Houston").
+export function normalizeCity(value: unknown): string | null {
+  const s = clean(value);
+  if (!s) return null;
+  return s
+    .toLowerCase()
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 export function safeDate(value: unknown): Date | null {
   const s = clean(value);
   if (!s) return null;
