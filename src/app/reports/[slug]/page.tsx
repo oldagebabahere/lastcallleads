@@ -6,7 +6,8 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { ensureSchema } from "@/db/bootstrap";
 import { events, licenses } from "@/db/schema";
-import { EventBadge, Footer, Nav, StatePill, fmtDate } from "@/components/ui";
+import { EventBadge, Footer, Nav, StatePill } from "@/components/ui";
+import { fmtDate } from "@/lib/fmt";
 import { embargoCutoff, maskName } from "@/lib/queries";
 import { BRAND } from "@/lib/brand";
 

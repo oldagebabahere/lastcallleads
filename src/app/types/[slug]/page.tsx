@@ -6,7 +6,8 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { ensureSchema } from "@/db/bootstrap";
 import { events, licenses } from "@/db/schema";
-import { Footer, LeadRow, Nav, StatePill, fmtDate } from "@/components/ui";
+import { Footer, LeadRow, Nav, StatePill } from "@/components/ui";
+import { fmtDate } from "@/lib/fmt";
 import { TYPE_LIBRARY } from "@/lib/license-types";
 
 export const dynamic = "force-dynamic";
