@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { Menu, X } from "lucide-react";
+import { Menu, Moon, Sun, X } from "lucide-react";
 import type { FilingEvent } from "@/db/schema";
 import { LogoMark } from "@/components/logo";
 import { BRAND } from "@/lib/brand";
@@ -73,6 +73,19 @@ const MOBILE_LINKS = [
 export function Nav() {
   const [scrolled, setScrolled] = useState(false);
   const [open, setOpen] = useState(false);
+  // light/dark theme — choice saved in localStorage, defaults to system
+  const [dark, setDark] = useState(false);
+  useEffect(() => {
+    setDark(document.documentElement.dataset.theme === "dark");
+  }, []);
+  const toggleTheme = () => {
+    const next = !dark;
+    setDark(next);
+    document.documentElement.dataset.theme = next ? "dark" : "";
+    try {
+      localStorage.setItem("theme", next ? "dark" : "light");
+    } catch {}
+  };
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 24);
@@ -120,6 +133,14 @@ export function Nav() {
           </nav>
 
           <div className="flex items-center gap-2 sm:gap-3">
+            <button
+              onClick={toggleTheme}
+              aria-label={dark ? "Switch to light theme" : "Switch to dark theme"}
+              title={dark ? "Light theme" : "Dark theme"}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-line text-smoke transition-colors hover:border-smoke hover:text-cream"
+            >
+              {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+            </button>
             <Link
               href="/#pricing"
               className="btn-mint hidden px-3.5 py-2 font-mono text-[11px] tracking-[0.12em] sm:inline-flex"

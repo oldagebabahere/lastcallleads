@@ -80,7 +80,7 @@ export default async function Home() {
   };
 
   return (
-    <main className="relative min-h-screen">
+    <main className="theme-flip relative min-h-screen">
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
@@ -438,7 +438,7 @@ export default async function Home() {
             [`${liveStates.length} + federal`, "sources feeding the machine", "state registries plus TTB permits for all 50 states"],
           ].map(([n, label, sub], i) => (
             <Reveal key={label} delay={i * 80}>
-              <div className="h-full rounded-xl border border-line bg-panel p-7">
+              <div className="stat-card h-full rounded-xl p-7">
                 <p className="font-display text-4xl font-light text-inkread">{n}</p>
                 <p className="mt-2 font-mono text-[10px] tracking-[0.18em] text-wine2">{String(label).toUpperCase()}</p>
                 <p className="mt-3 text-sm leading-relaxed text-inkread/60">{sub}</p>
@@ -448,7 +448,7 @@ export default async function Home() {
         </div>
 
         <Reveal delay={120}>
-          <div className="mt-8 rounded-xl border border-wine2/25 bg-white/60 p-8 sm:p-10">
+          <div className="card-soft2 mt-8 rounded-xl border border-wine2/25 p-8 sm:p-10">
             <p className="font-display text-2xl leading-snug text-ink sm:text-3xl">
               &ldquo;I got tired of hearing about new bars after everyone else did —
               so I built the morning email I always wished I had.&rdquo;

@@ -1,6 +1,11 @@
 @import "tailwindcss";
 
 @theme {
+  /* readability pass â body text a size up */
+  --text-sm: 0.95rem;
+  --text-sm--line-height: 1.65rem;
+  --text-base: 1.075rem;
+  --text-base--line-height: 1.8rem;
   --color-ink: #0e0a0c;
   --color-panel: #17100f;
   --color-panel2: #1e1413;
@@ -56,6 +61,7 @@ body {
   color: var(--color-inkread);
   font-family: var(--font-sans);
   font-size: 17px;
+  line-height: 1.65;
   -webkit-font-smoothing: antialiased;
   overflow-x: clip;
   background-image: radial-gradient(
@@ -445,7 +451,7 @@ body:not(.loaded) .hero-fade {
 /* eyebrow variant for light surfaces */
 .eyebrow-ink {
   font-family: var(--font-mono);
-  font-size: 0.6875rem;
+  font-size: 0.78125rem;
   letter-spacing: 0.3em;
   text-transform: uppercase;
   color: var(--color-wine2);
@@ -946,4 +952,82 @@ body:not(.loaded) .hero-fade {
     transform: none;
     transition: none;
   }
+}
+
+/* ================= LIGHT / DARK THEME =================
+   Default = the light editorial design. data-theme="dark" on <html>
+   flips only the LIGHT-side sections; the oxblood acts stay as-is.
+   Admin pages never get the flip (no .theme-flip class there). */
+
+/* soft cards used on light sections (theme-aware) */
+.stat-card {
+  border: 1px solid rgba(122, 43, 62, 0.16);
+  background: rgba(255, 252, 245, 0.62);
+}
+.card-soft2 {
+  background: rgba(255, 252, 245, 0.66);
+}
+
+[data-theme="dark"] .act-light,
+[data-theme="dark"] .section-cream,
+[data-theme="dark"] .section-sage,
+[data-theme="dark"] .theme-flip {
+  --color-ink: #f6eee1;
+  --color-inkread: #f0e2d2;
+  --color-line: #453236;
+  --color-faint: #97838a;
+  --color-paper: #100b0e;
+  --color-sand: #171013;
+  --color-cream-bg: #171013;
+  --color-sage: #151013;
+  --color-creamcard: #241820;
+}
+
+[data-theme="dark"] body {
+  background:
+    radial-gradient(1000px 560px at 100% 14%, rgba(164, 67, 90, 0.1), transparent 58%),
+    radial-gradient(900px 620px at 0% 46%, rgba(164, 67, 90, 0.07), transparent 60%),
+    #100b0e;
+  background-attachment: fixed;
+}
+
+[data-theme="dark"] .act-light {
+  background:
+    radial-gradient(110% 80% at 50% 0%, rgba(224, 170, 74, 0.06), transparent 55%),
+    linear-gradient(180deg, #100b0e 0%, #171013 100%);
+}
+
+[data-theme="dark"] .section-cream {
+  background:
+    radial-gradient(90% 70% at 80% 0%, rgba(224, 170, 74, 0.07), transparent 60%),
+    #171013;
+  color: var(--color-cream);
+}
+
+[data-theme="dark"] .section-sage {
+  background:
+    radial-gradient(90% 70% at 20% 0%, rgba(255, 255, 255, 0.04), transparent 60%),
+    #151013;
+  color: var(--color-cream);
+}
+
+[data-theme="dark"] .alloc-row {
+  border-color: rgba(246, 238, 225, 0.09);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.015));
+}
+[data-theme="dark"] .alloc-cell + .alloc-cell {
+  border-color: rgba(246, 238, 225, 0.07);
+}
+
+[data-theme="dark"] .stat-card {
+  border-color: rgba(246, 238, 225, 0.1);
+  background: rgba(255, 255, 255, 0.045);
+}
+[data-theme="dark"] .card-soft2 {
+  background: rgba(28, 18, 21, 0.72);
+}
+
+/* keep the neon logo box dark even though --color-ink flipped */
+[data-theme="dark"] .logo-neon {
+  background: #17100f;
 }

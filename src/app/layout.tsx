@@ -78,9 +78,16 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html
       lang="en"
+      suppressHydrationWarning
       className={`${display.variable} ${serifAccent.variable} ${sans.variable} ${mono.variable}`}
     >
       <body className="grain">
+        {/* theme bootstrap — runs before first paint so there is no flash */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var t=localStorage.getItem("theme");if(!t&&window.matchMedia&&matchMedia("(prefers-color-scheme: dark)").matches)t="dark";if(t==="dark")document.documentElement.dataset.theme="dark";}catch(e){}})();`,
+          }}
+        />
         <ScrollProgress />
         {children}
       </body>
