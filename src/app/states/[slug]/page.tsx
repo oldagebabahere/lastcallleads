@@ -139,7 +139,7 @@ export default async function StatePage({
   const faq = [
     {
       q: `Where do new ${s.name} liquor license applications get published?`,
-      a: "They are part of the official public record, updated regularly. Our system watches them around the clock and translates changes into alerts.",
+      a: "They come from the official state registry, updated regularly. Our system watches them around the clock and translates changes into alerts.",
     },
     {
       q: `How fast will I hear about a new ${s.name} filing?`,

@@ -10,7 +10,7 @@ import {
 } from "@/lib/ingest-aggregator";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 300;
+export const maxDuration = 60;
 
 export async function GET(req: Request) {
   if (!cronAuthorized(req)) {
@@ -25,20 +25,21 @@ export async function GET(req: Request) {
 
   if (aggregator === "true") {
     const wanted = (state ?? "").trim().toUpperCase();
+    const force = url.searchParams.get("force") === "1";
     if (wanted) {
-      const results = await runByState(wanted);
+      const ran = await runByState(wanted, force);
       return Response.json({
         ok: true,
         ranAt: new Date().toISOString(),
         state: wanted,
-        results,
+        ...ran,
       });
     }
-    const results = await runAllSources();
+    const ran = await runAllSources(force);
     return Response.json({
       ok: true,
       ranAt: new Date().toISOString(),
-      results,
+      ...ran,
     });
   }
 

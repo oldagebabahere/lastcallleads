@@ -85,6 +85,45 @@ export const ingestRuns = pgTable(
   (t) => [index("ingest_source_idx").on(t.source)]
 );
 
+export const sourceHealth = pgTable("source_health", {
+  id: serial("id").primaryKey(),
+  source: text("source").notNull().unique(), // spec label, e.g. "US · TTB alcohol wholesalers"
+  state: text("state").notNull().default("US"),
+  status: text("status").notNull().default("live"), // live | paused
+  pausedReason: text("paused_reason"),
+  consecutiveFailures: integer("consecutive_failures").notNull().default(0),
+  lastRows: integer("last_rows").notNull().default(0),
+  medianRows: integer("median_rows").notNull().default(0),
+  lastOkAt: timestamp("last_ok_at"),
+  lastRunAt: timestamp("last_run_at"),
+  lastProbeAt: timestamp("last_probe_at"),
+  alertState: text("alert_state").notNull().default("none"), // none | paused | recovered
+  // Auto-heal: when a dataset dies, PourWatch searches the Socrata catalog
+  // for a replacement; the adopted dataset id is stored here and wins over
+  // the hardcoded one.
+  overrideDataset: text("override_dataset"),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const venueReceipts = pgTable(
+  "venue_receipts",
+  {
+    id: serial("id").primaryKey(),
+    permit: text("permit").notNull(), // TABC permit / taxpayer+location
+    tradeName: text("trade_name"),
+    city: text("city"),
+    county: text("county"),
+    state: text("state").notNull().default("TX"),
+    periodEnd: text("period_end"), // YYYY-MM-DD reporting period end
+    total: doublePrecision("total").notNull().default(0), // $ alcohol receipts
+    liquor: doublePrecision("liquor"),
+    wine: doublePrecision("wine"),
+    beer: doublePrecision("beer"),
+    firstSeenAt: timestamp("first_seen_at").defaultNow().notNull(),
+  },
+  (t) => [uniqueIndex("venue_receipts_uidx").on(t.permit, t.periodEnd)]
+);
+
 export const subscribers = pgTable("subscribers", {
   id: serial("id").primaryKey(),
   email: text("email").notNull().unique(),
@@ -94,14 +133,36 @@ export const subscribers = pgTable("subscribers", {
   states: text("states").default("TX,NY").notNull(), // comma joined: "TX,NY,CA"
   emailOptOut: boolean("email_opt_out").default(false).notNull(),
   refBy: text("ref_by"), // email of the subscriber who referred this person
+  referralCredits: integer("referral_credits").default(0).notNull(), // banked free months from successful referrals
   zipFilter: text("zip_filter"), // comma-joined ZIP codes, e.g. "77019,77002"
   typeFilter: text("type_filter"), // comma-joined intent tags: "full-bar,package-store"
+  cityFilter: text("city_filter"), // saved search: city name (case-insensitive)
+  keywordFilter: text("keyword_filter"), // saved search: free-text keywords
   prefsToken: text("prefs_token"), // magic link token for /prefs?token=...
   digestLimit: integer("digest_limit").default(40).notNull(),
+  // 7-day free trial: digests flow from day one without a card; the day it
+  // ends we send one "trial over" email and stop.
+  trialEndsAt: timestamp("trial_ends_at"),
+  trialNotified: boolean("trial_notified").default(false).notNull(),
   stripeCustomerId: text("stripe_customer_id"), // payment-provider customer id (any gateway)
   stripeSubscriptionId: text("stripe_subscription_id"),
   lastDigestAt: timestamp("last_digest_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const prospects = pgTable("prospects", {
+  id: serial("id").primaryKey(),
+  category: text("category").notNull(), // attorney | insurance | beverage | bar
+  osmKey: text("osm_key").notNull(), // "node/12345" from OpenStreetMap
+  name: text("name").notNull(),
+  phone: text("phone"),
+  website: text("website"),
+  address: text("address"),
+  city: text("city"),
+  state: text("state").notNull(),
+  lat: doublePrecision("lat"),
+  lng: doublePrecision("lng"),
+  firstSeenAt: timestamp("first_seen_at").defaultNow().notNull(),
 });
 
 export const contactMessages = pgTable(

@@ -6,12 +6,14 @@ import { Resend } from "resend";
 import { alertFrom } from "@/lib/email";
 import { runBriefings } from "@/lib/digest";
 import { BRAND } from "@/lib/brand";
+import { ALL_STATE_SOURCES } from "@/lib/ingest-aggregator";
 
 export type MaintenanceReport = {
   ok: boolean;
   prunedRuns: number;
   prunedEmails: number;
   compactedEvents: number;
+  purgedBadDates: number;
   staleSources: string[];
   warningSent: boolean;
   databaseBytes: number | null;
@@ -62,16 +64,28 @@ export async function runMaintenance(): Promise<MaintenanceReport> {
     ) SELECT count(*)::int AS n FROM deleted
   `);
 
+  // Purge corrupt events imported before the date-sanity guard existed —
+  // anything dated in the future (e.g. Colorado's "2262" issue dates) or
+  // implausibly old. These poison the top of the feed because it sorts by
+  // occurred_at descending.
+  const badDates = await pool.query<CountRow>(`
+    WITH deleted AS (
+      DELETE FROM events
+      WHERE occurred_at > now() + interval '1 day'
+         OR occurred_at < timestamp '1990-01-01'
+      RETURNING 1
+    ) SELECT count(*)::int AS n FROM deleted
+  `);
+
   const sourceRows = await pool.query<SourceRow>(`
     SELECT source, max(finished_at) FILTER (WHERE ok = true) AS last_ok
     FROM ingest_runs
     GROUP BY source
   `);
   const cutoff = Date.now() - 48 * 60 * 60 * 1000;
-  // CA is optional until CA_EXPORT_URL exists; don't cry wolf.
-  const expected = process.env.CA_EXPORT_URL
-    ? ["tx-pending", "tx-active", "ny-pending", "ny-active", "ca"]
-    : ["tx-pending", "tx-active", "ny-pending", "ny-active"];
+  // The daily cron runs the aggregator, so the labels it logs are what we
+  // expect to see fresh. (Legacy runner ids are gone from the schedule.)
+  const expected = ALL_STATE_SOURCES.map((s) => s.label);
   const bySource = new Map(sourceRows.rows.map((r) => [r.source, r.last_ok]));
   const staleSources = expected.filter((source) => {
     const date = bySource.get(source);
@@ -113,6 +127,7 @@ export async function runMaintenance(): Promise<MaintenanceReport> {
     prunedRuns: Number(oldRuns.rows[0]?.n ?? 0),
     prunedEmails: Number(oldEmails.rows[0]?.n ?? 0),
     compactedEvents: Number(compact.rows[0]?.n ?? 0),
+    purgedBadDates: Number(badDates.rows[0]?.n ?? 0),
     staleSources,
     warningSent,
     databaseBytes,

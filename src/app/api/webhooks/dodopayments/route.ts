@@ -5,7 +5,7 @@ import { ensureSchema } from "@/db/bootstrap";
 import { subscribers } from "@/db/schema";
 import { verifyDodoSignature } from "@/lib/dodo";
 import { sendWelcome } from "@/lib/email";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
@@ -74,7 +74,11 @@ export async function POST(req: Request) {
           : null,
       })
       .where(eq(subscribers.email, email))
-      .returning({ states: subscribers.states, plan: subscribers.plan });
+      .returning({
+        states: subscribers.states,
+        plan: subscribers.plan,
+        refBy: subscribers.refBy,
+      });
 
     if (updated[0]) {
       await sendWelcome({
@@ -82,6 +86,16 @@ export async function POST(req: Request) {
         states: updated[0].states,
         plan: updated[0].plan,
       });
+
+      // Referral auto-credit: this new customer was referred by someone —
+      // bank one free month against the referrer's account automatically.
+      const referrer = updated[0].refBy;
+      if (referrer && referrer !== email) {
+        await db
+          .update(subscribers)
+          .set({ referralCredits: sql`${subscribers.referralCredits} + 1` })
+          .where(eq(subscribers.email, referrer));
+      }
     }
   }
 

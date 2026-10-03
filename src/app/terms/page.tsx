@@ -31,7 +31,7 @@ export default function TermsPage() {
           <li>Use the service for lawful business research, prospecting and internal analysis.</li>
           <li>Do not attack, overload, reverse engineer, resell, mirror or systematically extract the service.</li>
           <li>Do not use data for harassment, discrimination, deception, unlawful surveillance or illegal marketing.</li>
-          <li>Comply with CAN-SPAM and other laws when contacting prospects; a public record does not remove your compliance duties.</li>
+          <li>Comply with CAN-SPAM and other laws when contacting prospects; the official nature of this data does not remove your compliance duties.</li>
         </LegalList>
       </LegalSection>
       <LegalSection title="6. Data accuracy and corrections">

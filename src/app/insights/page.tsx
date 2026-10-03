@@ -11,14 +11,23 @@ import { Footer, Nav } from "@/components/ui";
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "Liquor-market data desk — live stats from public registries",
+  title: "Liquor-market data desk — live stats from official registries",
   description:
-    "Live liquor-license statistics for Texas and New York: what's being filed, where, and how fast — computed daily from official state records.",
+    "Live liquor-license statistics for every covered state: what's being filed, where, and how fast — computed daily from official state registries.",
 };
 
 const DESKS = [
   { slug: "texas", code: "TX", name: "Texas", note: "TABC filings · 78K+ active licenses under watch" },
-  { slug: "new-york", code: "NY", name: "New York", note: "SLA filings · 60K+ active licenses under watch" },
+  { slug: "new-york", code: "NY", name: "New York", note: "State Liquor Authority filings · live watch" },
+  { slug: "california", code: "CA", name: "California", note: "ABC daily export · 130K+ licenses under watch" },
+  { slug: "florida", code: "FL", name: "Florida", note: "DBPR alcohol division · weekly extracts" },
+  { slug: "illinois", code: "IL", name: "Illinois", note: "Liquor Control Commission · live watch" },
+  { slug: "missouri", code: "MO", name: "Missouri", note: "Division of Alcohol & Tobacco Control · live watch" },
+  { slug: "colorado", code: "CO", name: "Colorado", note: "Liquor Enforcement Division · approvals + closings" },
+  { slug: "connecticut", code: "CT", name: "Connecticut", note: "Liquor Control Division · live watch" },
+  { slug: "maryland", code: "MD", name: "Maryland", note: "Comptroller alcohol & tobacco · live watch" },
+  { slug: "oregon", code: "OR", name: "Oregon", note: "OLCC licenses · live watch" },
+  { slug: "washington", code: "WA", name: "Washington", note: "Liquor & Cannabis Board applications · live watch" },
 ];
 
 export default async function InsightsIndex() {
@@ -77,10 +86,12 @@ export default async function InsightsIndex() {
                     {d.note.toUpperCase()}
                   </p>
                   <div className="mt-6 flex gap-8 border-t border-line pt-5">
-                    <div>
-                      <p className="font-display text-2xl font-semibold text-cream">{s.pending.toLocaleString()}</p>
-                      <p className="mt-0.5 font-mono text-[9px] tracking-[0.18em] text-faint">IN REVIEW NOW</p>
-                    </div>
+                    {s.pending > 0 && (
+                      <div>
+                        <p className="font-display text-2xl font-semibold text-cream">{s.pending.toLocaleString()}</p>
+                        <p className="mt-0.5 font-mono text-[9px] tracking-[0.18em] text-faint">IN REVIEW NOW</p>
+                      </div>
+                    )}
                     <div>
                       <p className="font-display text-2xl font-semibold text-cream">{s.filings30.toLocaleString()}</p>
                       <p className="mt-0.5 font-mono text-[9px] tracking-[0.18em] text-faint">FILED · 30 DAYS</p>

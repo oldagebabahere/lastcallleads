@@ -152,8 +152,12 @@ export async function runIngest(sourceId: SourceId): Promise<IngestResult> {
       // Events — throttled on the very first pull so we seed, not flood.
       const eventRows: (typeof events.$inferInsert)[] = [];
       for (const rec of fresh) {
-        const when = rec.filedAt ?? rec.issuedAt ?? new Date();
-        const t = when.getTime();
+        const when = rec.filedAt ?? rec.issuedAt;
+        // An "active" record with no trustworthy date can't be proven recent —
+        // log the license, but don't fabricate a fresh-looking event for it.
+        if (!when && rec.kind !== "pending") continue;
+        const whenDate = when ?? new Date();
+        const t = whenDate.getTime();
         const allow =
           rec.kind === "pending"
             ? !isFirstRun || t >= cutoff14d
@@ -168,7 +172,7 @@ export async function runIngest(sourceId: SourceId): Promise<IngestResult> {
           city: rec.city,
           county: rec.county,
           typeName: rec.typeName,
-          occurredAt: when,
+          occurredAt: whenDate,
           summary: summarize(
             rec.kind === "pending" ? "NEW_PENDING" : "NEW_LICENSE",
             rec
@@ -194,7 +198,7 @@ export async function runIngest(sourceId: SourceId): Promise<IngestResult> {
         }
       }
       for (let j = 0; j < eventRows.length; j += CHUNK) {
-        await db.insert(events).values(eventRows.slice(j, j + CHUNK));
+        await db.insert(events).values(eventRows.slice(j, j + CHUNK)).onConflictDoNothing();
       }
       newEvents += eventRows.length;
     }

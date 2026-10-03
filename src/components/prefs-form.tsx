@@ -2,8 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { CheckCircle2, LoaderCircle, Save } from "lucide-react";
-
-const ALL_STATES = ["TX", "NY", "CA", "IL", "WA", "OR", "MO", "CO", "CT", "MD"];
+import StatePicker from "@/components/state-picker";
 
 const TAGS: { id: string; label: string }[] = [
   { id: "full-bar", label: "Full bars (spirits)" },
@@ -23,17 +22,27 @@ export default function PrefsForm({ email, token }: { email: string; token: stri
   const [phase, setPhase] = useState<Phase>("loading");
   const [states, setStates] = useState<string[]>(["TX"]);
   const [zips, setZips] = useState("");
+  const [city, setCity] = useState("");
+  const [keywords, setKeywords] = useState("");
   const [tags, setTags] = useState<string[]>([]);
   const [limit, setLimit] = useState(40);
   const [message, setMessage] = useState("");
 
   useEffect(() => {
+    // "Save this search" from /feed lands here with ?city=…&q=… prefilled.
+    const pre = new URLSearchParams(window.location.search);
+    const preCity = pre.get("city") ?? "";
+    const preQ = pre.get("q") ?? "";
+    if (preCity) setCity(preCity);
+    if (preQ) setKeywords(preQ);
     fetch(`/api/prefs?${qs}`)
       .then((r) => r.json())
       .then((d) => {
         if (d.ok) {
           setStates(d.prefs.states?.length ? d.prefs.states : ["TX"]);
           setZips(d.prefs.zipFilter ?? "");
+          setCity(d.prefs.cityFilter ?? "");
+          setKeywords(d.prefs.keywordFilter ?? "");
           setTags(d.prefs.typeFilter ? d.prefs.typeFilter.split(",") : []);
           setLimit(d.prefs.digestLimit ?? 40);
           setPhase("ready");
@@ -58,6 +67,8 @@ export default function PrefsForm({ email, token }: { email: string; token: stri
           states,
           zipFilter: zips,
           typeFilter: tags.join(","),
+          cityFilter: city,
+          keywordFilter: keywords,
           digestLimit: limit,
         }),
       });
@@ -106,23 +117,10 @@ export default function PrefsForm({ email, token }: { email: string; token: stri
           1. Which states?
         </h2>
         <p className="mt-1 text-sm text-smoke">Pick every territory you sell into.</p>
-        <div className="mt-4 flex flex-wrap gap-2">
-          {ALL_STATES.map((s) => (
-            <button
-              key={s}
-              type="button"
-              onClick={() => toggle(states, s, setStates)}
-              className={`rounded-md border px-3 py-2 font-mono text-[11px] tracking-[0.15em] transition-colors ${
-                states.includes(s)
-                  ? "border-amber/60 bg-amber/15 text-amber"
-                  : "border-line bg-ink text-smoke hover:text-cream"
-              }`}
-            >
-              {s}
-            </button>
-          ))}
+        <div className="mt-4">
+          <StatePicker selected={states} onToggle={(s) => toggle(states, s, setStates)} max={3} />
         </div>
-      </section>
+            </section>
 
       {/* zips */}
       <section className="rounded-xl border border-line bg-panel p-6">
@@ -143,6 +141,36 @@ export default function PrefsForm({ email, token }: { email: string; token: stri
         />
         <p className="mt-2 font-mono text-[10px] tracking-[0.1em] text-faint">
           TIP: YOUR BEST 5 ZIPS BEAT THE WHOLE STATE — FEWER, BETTER CALLS
+        </p>
+      </section>
+
+      {/* saved search — city + keywords */}
+      <section className="rounded-xl border border-amber/40 bg-amber/5 p-6">
+        <h2 className="font-display text-xl font-medium text-cream">
+          Saved search{" "}
+          <span className="font-mono text-[10px] tracking-[0.15em] text-amber">
+            ALERTS
+          </span>
+        </h2>
+        <p className="mt-1 text-sm text-smoke">
+          City ya keywords — sirf matching filings aayenge, roz subah.
+        </p>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <input
+            value={city}
+            onChange={(e) => setCity(e.target.value)}
+            placeholder="City — e.g. Houston"
+            className={input}
+          />
+          <input
+            value={keywords}
+            onChange={(e) => setKeywords(e.target.value)}
+            placeholder="Keywords — e.g. full bar, nightclub"
+            className={input}
+          />
+        </div>
+        <p className="mt-2 font-mono text-[10px] tracking-[0.1em] text-faint">
+          EXAMPLE: CITY "HOUSTON" + KEYWORD "FULL BAR" = SIRF HOUSTON KE FULL-BAR FILINGS
         </p>
       </section>
 

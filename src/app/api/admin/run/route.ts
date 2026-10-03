@@ -6,12 +6,14 @@ import { runBriefings, runDigest, runMonthlyRecaps } from "@/lib/digest";
 import { sendWelcome } from "@/lib/email";
 import { runIngest, type SourceId, SOURCES } from "@/lib/ingest-run";
 import { runAllSources, runByState } from "@/lib/ingest-aggregator";
+import { runReceiptsIngest } from "@/lib/ingest-receipts";
+import { clientIp, rateLimit, tooManyRequests } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 300;
+export const maxDuration = 60;
 
 export async function POST(req: Request) {
-  let body: { key?: string; action?: string; source?: string; state?: string; email?: string; status?: string; name?: string; states?: string; plan?: string };
+  let body: { key?: string; action?: string; source?: string; state?: string; email?: string; status?: string; name?: string; states?: string; plan?: string; force?: boolean };
   try {
     body = await req.json();
   } catch {
@@ -19,6 +21,10 @@ export async function POST(req: Request) {
   }
   if (!isAdminKey(body.key)) {
     return Response.json({ ok: false, error: "unauthorized" }, { status: 401 });
+  }
+  // key is valid — still cap how often one IP can trigger heavy work
+  if (!rateLimit({ key: `run:${clientIp(req)}`, max: 30, windowMs: 60_000 })) {
+    return tooManyRequests();
   }
 
   const action = body.action ?? "";
@@ -30,21 +36,27 @@ export async function POST(req: Request) {
     await ensureSchema();
     const source = body.source as SourceId | undefined;
     const stateFilter = body.state as "TX" | "NY" | "CA" | undefined;
-    let results = [];
+    const force = body.force === true;
+    let agg: { results: unknown[]; skipped: string[] };
     if (stateFilter && ["TX", "NY", "CA"].includes(stateFilter)) {
-      results = await runByState(stateFilter);
+      agg = await runByState(stateFilter, force);
     } else {
       // Aggregator path: pulls every configured state source at once.
-      results = await runAllSources();
+      agg = await runAllSources(force);
       const ids = (Object.keys(SOURCES) as SourceId[]).filter(
         (s) => !source || s === source
       );
       for (const id of ids) {
         const r = await runIngest(id);
-        results.push({ label: r.source, state: "TX", ok: r.ok, rowsSeen: r.rowsSeen ?? 0, newLicenses: r.newLicenses ?? 0, newEvents: r.newEvents ?? 0, ...(r.error ? { error: r.error } : {}) });
+        agg.results.push({ label: r.source, state: "TX", ok: r.ok, rowsSeen: r.rowsSeen ?? 0, newLicenses: r.newLicenses ?? 0, newEvents: r.newEvents ?? 0, ...(r.error ? { error: r.error } : {}) });
       }
     }
-    return Response.json({ ok: true, results });
+    return Response.json({ ok: true, ...agg });
+  }
+  if (action === "receipts") {
+    await ensureSchema();
+    const r = await runReceiptsIngest();
+    return Response.json({ ok: r.ok, receipts: r });
   }
   if (action === "digest") {
     await ensureSchema();

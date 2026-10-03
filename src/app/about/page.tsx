@@ -18,7 +18,7 @@ export default function AboutPage() {
       <div className="mx-auto max-w-5xl px-5 pb-20 pt-28">
         <p className="eyebrow">[ About · why this exists ]</p>
         <h1 className="font-display mt-5 max-w-3xl text-4xl font-medium leading-tight sm:text-6xl">
-          Public records are free.
+          Licenses are public.
           <span className="italic text-amber"> Being first is valuable.</span>
         </h1>
         <p className="mt-6 max-w-2xl text-base leading-relaxed text-smoke">
@@ -49,7 +49,7 @@ export default function AboutPage() {
               <h2 className="font-display text-2xl font-medium text-cream">What we are—and are not</h2>
               <p className="mt-3">
                 We are a monitoring and sales-intelligence service. We are not a government agency,
-                law firm, license broker, or application processor. Public records can contain delays
+                law firm, license broker, or application processor. Official records can contain delays
                 or errors, so customers should verify important details at the linked official source.
               </p>
             </section>

@@ -17,6 +17,15 @@ export const dynamic = "force-dynamic";
 const DESKS: Record<string, { code: string; name: string }> = {
   texas: { code: "TX", name: "Texas" },
   "new-york": { code: "NY", name: "New York" },
+  california: { code: "CA", name: "California" },
+  florida: { code: "FL", name: "Florida" },
+  illinois: { code: "IL", name: "Illinois" },
+  missouri: { code: "MO", name: "Missouri" },
+  colorado: { code: "CO", name: "Colorado" },
+  connecticut: { code: "CT", name: "Connecticut" },
+  maryland: { code: "MD", name: "Maryland" },
+  oregon: { code: "OR", name: "Oregon" },
+  washington: { code: "WA", name: "Washington" },
 };
 
 export async function generateMetadata({

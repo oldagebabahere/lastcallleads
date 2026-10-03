@@ -50,18 +50,21 @@ export async function GET(req: Request) {
     .orderBy(desc(events.occurredAt))
     .limit(2000);
 
-  // Apply the subscriber's own filters so the CSV matches what they receive.
-  const zips = (sub.zipFilter ?? "")
+  // Apply the subscriber's own digest filters so the CSV matches the email.
+  const cityNeedle = (sub.cityFilter ?? "").trim().toLowerCase();
+  const keywords = (sub.keywordFilter ?? "")
     .split(",")
-    .map((z) => z.trim())
+    .map((k) => k.trim().toLowerCase())
     .filter(Boolean);
-  const filtered = zips.length
-    ? data.filter((e) => {
-        // zip is not stored on events; keep rows whose city matches the
-        // subscriber's territory when a ZIP filter is active.
-        return !e.city || true;
-      })
-    : data;
+  const filtered = data.filter((e) => {
+    const city = (e.city ?? "").toLowerCase();
+    if (cityNeedle && !city.includes(cityNeedle)) return false;
+    if (keywords.length) {
+      const hay = `${e.summary ?? ""} ${e.typeName ?? ""} ${e.tradeName ?? ""} ${city}`.toLowerCase();
+      return keywords.every((k) => hay.includes(k));
+    }
+    return true;
+  });
 
   const header = [
     "signal",

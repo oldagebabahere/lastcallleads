@@ -12,9 +12,9 @@ export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title:
-    "All covered cities — TX & NY liquor filings by city",
+    "Liquor license filings by city — every covered city, every state",
   description:
-    "Every city covered by Last Call Leads. Click any city for live filings, license types and recent openings.",
+    "Every city Last Call Leads monitors across our covered states. Click any city for live filings, license types and recent openings.",
 };
 
 // Pure programmatic SEO goldmine: every city with a filing becomes
@@ -79,6 +79,7 @@ export default async function CitiesIndexPage() {
     TX: "Texas",
     NY: "New York",
     CA: "California",
+    FL: "Florida",
     IL: "Illinois",
     WA: "Washington",
     OR: "Oregon",

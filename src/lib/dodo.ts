@@ -5,16 +5,23 @@
 // Settles directly to an Indian bank account — no PayPal relay needed.
 //
 // Required env vars:
-//   DODO_API_KEY         — from Dashboard → Developers → API Keys
-//   DODO_PRODUCT_ID      — the subscription product id
-//   DODO_WEBHOOK_SECRET  — signing secret from the webhook config
+//   DODO_API_KEY          — from Dashboard → Developers → API Keys
+//   DODO_PRODUCT_ID_SOLO  — $129/mo product id (Territory · 1 state)
+//   DODO_PRODUCT_ID_PRO   — $249/mo product id (Multi-State · 3 states)
+//   DODO_PRODUCT_ID       — fallback if the per-plan ids are not set
+//   DODO_WEBHOOK_SECRET   — signing secret from the webhook config
 //   PAYMENT_PROVIDER=dodo (optional; auto-detected when the keys exist)
 import crypto from "crypto";
 
 const DODO_API = process.env.DODO_API_BASE ?? "https://live.dodopayments.com";
 
 export function dodoConfigured(): boolean {
-  return Boolean(process.env.DODO_API_KEY && process.env.DODO_PRODUCT_ID);
+  return Boolean(
+    process.env.DODO_API_KEY &&
+      (process.env.DODO_PRODUCT_ID ||
+        process.env.DODO_PRODUCT_ID_SOLO ||
+        process.env.DODO_PRODUCT_ID_PRO)
+  );
 }
 
 // Verify Dodo's webhook signature (HMAC-SHA256 of the raw body).
@@ -38,14 +45,19 @@ export function verifyDodoSignature(
   }
 }
 
-// Creates a hosted checkout session for one subscriber.
+// Creates a hosted checkout session for one subscriber. The plan picks the
+// Dodo product, so a $129 customer is never charged the $249 price.
 export async function createDodoCheckout(opts: {
   email: string;
   subscriberId: number;
   returnUrl: string;
+  plan?: string;
 }): Promise<string> {
   const key = process.env.DODO_API_KEY!;
-  const productId = process.env.DODO_PRODUCT_ID!;
+  const productId =
+    opts.plan === "solo"
+      ? (process.env.DODO_PRODUCT_ID_SOLO ?? process.env.DODO_PRODUCT_ID)!
+      : (process.env.DODO_PRODUCT_ID_PRO ?? process.env.DODO_PRODUCT_ID)!;
 
   const res = await fetch(`${DODO_API}/checkouts`, {
     method: "POST",

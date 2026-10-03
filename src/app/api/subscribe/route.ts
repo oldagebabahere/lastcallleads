@@ -10,25 +10,23 @@ import { siteUrl } from "@/lib/site";
 import { createDodoCheckout, dodoConfigured } from "@/lib/dodo";
 import { eq } from "drizzle-orm";
 import { subscribers } from "@/db/schema";
+import { clientIp, rateLimit, tooManyRequests } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const VALID_STATES = new Set([
-  "TX",
-  "NY",
-  "CA",
-  "MO",
-  "CO",
-  "CT",
-  "WA",
-  "IL",
-  "MD",
-  "OR",
-]);
+// All 50 states + DC: state-level retail filings where portals exist, and
+// federal TTB permits (new wholesalers/producers/wineries) everywhere else.
+const VALID_STATES = new Set(
+  "AL AK AZ AR CA CO CT DC DE FL GA HI IA ID IL IN KS KY LA MA MD ME MI MN MO MS MT NC ND NE NH NJ NM NV NY OH OK OR PA RI SC SD TN TX UT VA VT WA WI WV WY".split(" ")
+);
 const KNOWN_PLANS = new Set(["solo", "pro"]);
 
 export async function POST(req: Request) {
+  // public endpoint — cap sign-up spam from a single IP
+  if (!rateLimit({ key: `sub:${clientIp(req)}`, max: 5, windowMs: 60_000 })) {
+    return tooManyRequests();
+  }
   let body: {
     email?: string;
     name?: string;
@@ -51,7 +49,14 @@ export async function POST(req: Request) {
   const states = (body.states ?? [])
     .map((s) => String(s).trim().toUpperCase())
     .filter((s) => VALID_STATES.has(s));
-  const stateList = states.length ? states : ["TX"];
+  if (!states.length) {
+    return Response.json(
+      { ok: false, error: "pick_at_least_one_state" },
+      { status: 422 }
+    );
+  }
+  // Solo covers ONE state (as priced); All-Access up to 12.
+  const stateList = plan === "solo" ? states.slice(0, 1) : states.slice(0, 3);
 
   // Referral attribution — "refer one paying rep, get a month free".
   const rawRef = (body.ref ?? "").trim().toLowerCase();
@@ -85,7 +90,9 @@ export async function POST(req: Request) {
         name: body.name ?? null,
         plan,
         states: stateList.join(","),
-        status: "waitlist",
+        // Real trial: digests flow immediately, no card needed, for 7 days.
+        status: "trial",
+        trialEndsAt: new Date(Date.now() + 7 * 86_400_000),
         ...(refBy ? { refBy } : {}),
       })
       .returning({ id: subscribers.id });
@@ -98,6 +105,7 @@ export async function POST(req: Request) {
       const checkoutUrl = await createDodoCheckout({
         email,
         subscriberId,
+        plan,
         returnUrl: `${siteUrl()}/welcome?session=ok`,
       });
       return Response.json({ ok: true, mode: "checkout", checkoutUrl });
@@ -108,8 +116,8 @@ export async function POST(req: Request) {
 
   return Response.json({
     ok: true,
-    mode: "waitlist",
+    mode: "trial",
     message:
-      "You are on the early-access list. We will email you the moment your territory opens.",
+      "Trial live: your first morning digest arrives tomorrow (7 days free, no card).",
   });
 }

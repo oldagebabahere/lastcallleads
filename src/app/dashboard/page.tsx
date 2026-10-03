@@ -1,5 +1,5 @@
 import { desc, sql } from "drizzle-orm";
-import { db } from "@/db";
+import { db, pool } from "@/db";
 import { ensureSchema } from "@/db/bootstrap";
 import { contactMessages, emailLog, events, ingestRuns, licenses, subscribers } from "@/db/schema";
 import { buildLeadSheet } from "@/lib/leadsheet";
@@ -9,7 +9,8 @@ import RunButtons from "@/components/run-buttons";
 import SubscriberActions from "@/components/subscriber-actions";
 import AddClientForm from "@/components/add-client-form";
 import FirstCustomerPlaybook from "@/components/first-customer-playbook";
-import { EventBadge, fmtDate } from "@/components/ui";
+import { EventBadge } from "@/components/ui";
+import { fmtDate } from "@/lib/fmt";
 import type { Metadata } from "next";
 
 export const dynamic = "force-dynamic";
@@ -69,6 +70,37 @@ export default async function Dashboard({
         </form>
       </Shell>
     );
+  }
+
+  // Goldmine: latest reporting period per venue, biggest first.
+  let goldmine: {
+    permit: string;
+    name: string | null;
+    city: string | null;
+    total: number;
+    liquor: number | null;
+    wine: number | null;
+    beer: number | null;
+  }[] = [];
+  try {
+    const r = await pool.query(
+      `SELECT DISTINCT ON (permit) permit, trade_name AS name, city, total, liquor, wine, beer
+       FROM venue_receipts ORDER BY permit, period_end DESC, total DESC`
+    );
+    goldmine = r.rows
+      .map((x: Record<string, unknown>) => ({
+        permit: String(x.permit),
+        name: (x.name as string) ?? null,
+        city: (x.city as string) ?? null,
+        total: Number(x.total ?? 0),
+        liquor: x.liquor === null ? null : Number(x.liquor),
+        wine: x.wine === null ? null : Number(x.wine),
+        beer: x.beer === null ? null : Number(x.beer),
+      }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 20);
+  } catch {
+    goldmine = [];
   }
 
   // ===== authorized =====
@@ -156,9 +188,106 @@ export default async function Dashboard({
           />
         </div>
 
+        {/* prospect finder link */}
+        <div className="mt-4 rounded-xl border border-amber/30 bg-amber/5 p-4">
+          <a href={`/dashboard/prospects?key=${key2}`} className="font-mono text-[11px] font-semibold tracking-[0.15em] text-amber hover:underline">
+            → PROSPECT FINDER — tumhare customers ka unlimited daily list (attorneys / insurance / beverage) — CSV
+          </a>
+          <span className="mx-2 text-faint">·</span>
+          <a href={`/dashboard/map?key=${key2}`} className="font-mono text-[11px] font-semibold tracking-[0.15em] text-amber hover:underline">
+            MAP VIEW — saare leads pin-map pe
+          </a>
+        </div>
+
         {/* first customer playbook */}
         <section className="mt-8">
-          <FirstCustomerPlaybook />
+          {/* ================= GOLDMINE — top venues by alcohol revenue ================= */}
+        <section className="mt-10 border-t border-line pt-8">
+          <SectionTitle>Goldmine — biggest fish first</SectionTitle>
+          <p className="mb-4 max-w-2xl text-sm leading-relaxed text-smoke">
+            Texas Comptroller publishes every venue&apos;s monthly alcohol receipts.
+            These are the accounts worth a phone call before anyone else — sorted
+            by revenue, refreshed daily.
+          </p>
+          {goldmine.length === 0 ? (
+            <p className="rounded-xl border border-line px-6 py-8 font-mono text-xs text-smoke">
+              No receipts data yet — it loads on the next daily sweep (or press RUN above).
+            </p>
+          ) : (
+            <div className="overflow-hidden rounded-xl border border-line">
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-line bg-panel font-mono text-[9px] tracking-[0.18em] text-faint">
+                    <th className="px-4 py-3">VENUE</th>
+                    <th className="px-4 py-3">CITY</th>
+                    <th className="px-4 py-3 text-right">ALCOHOL / MO</th>
+                    <th className="hidden px-4 py-3 text-right sm:table-cell">L/W/B SPLIT</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {goldmine.map((v) => (
+                    <tr key={v.permit} className="border-b border-line/60 last:border-0">
+                      <td className="px-4 py-2.5 text-cream">{v.name ?? "—"}</td>
+                      <td className="px-4 py-2.5 text-smoke">{v.city ?? "—"}</td>
+                      <td className="px-4 py-2.5 text-right font-mono text-amber">
+                        ${Math.round(v.total).toLocaleString()}
+                      </td>
+                      <td className="hidden px-4 py-2.5 text-right font-mono text-[11px] text-faint sm:table-cell">
+                        {[v.liquor, v.wine, v.beer]
+                          .map((x) => (x ? `$${Math.round(x / 1000)}k` : "—"))
+                          .join(" / ")}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+
+        {/* ================= SYSTEM STATUS (owner manual, moved from /setup) ================= */}
+        <section className="mt-10 border-t border-line pt-8">
+          <SectionTitle>System status — the owner manual</SectionTitle>
+          <p className="mb-4 max-w-2xl text-sm leading-relaxed text-smoke">
+            Everything the machine needs is below. Green = done. Amber = add it in your
+            hosting provider&apos;s Environment Variables, then redeploy. No code, ever.
+          </p>
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {[
+              { ok: Boolean(process.env.DATABASE_URL), title: "Database", hint: "Where filings live" },
+              { ok: isAdminKey(key ?? null), title: "Admin password", hint: "ADMIN_KEY set + you used it" },
+              { ok: Boolean(process.env.RESEND_API_KEY), title: "Email (Resend)", hint: "Daily digests go out with this" },
+              { ok: Boolean(process.env.OPS_EMAIL), title: "Ops email", hint: "Where watchdog alerts land" },
+              {
+                ok: Boolean(
+                  process.env.NEXT_PUBLIC_BUSINESS_LEGAL_NAME &&
+                    process.env.NEXT_PUBLIC_BUSINESS_POSTAL_ADDRESS &&
+                    process.env.NEXT_PUBLIC_CONTACT_EMAIL
+                ),
+                title: "Legal identity",
+                hint: "Legal name + postal address + contact (CAN-SPAM)",
+              },
+              { ok: Boolean(process.env.UNSUBSCRIBE_SECRET || process.env.ADMIN_KEY), title: "Unsubscribe secret", hint: "Signs subscriber links" },
+              { ok: dodoConfigured(), title: "Payments (Dodo)", hint: "Checkout + webhooks" },
+              { ok: Boolean(process.env.CRON_SECRET), title: "Cron secret", hint: "Protects scheduled jobs" },
+            ].map((c) => (
+              <div
+                key={c.title}
+                className={`rounded-xl border p-4 ${c.ok ? "border-leaf/30 bg-leaf/5" : "border-amber/40 bg-amber/5"}`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm font-semibold text-cream">{c.title}</p>
+                  <span className={`font-mono text-[9px] tracking-[0.15em] ${c.ok ? "text-leaf" : "text-amber"}`}>
+                    {c.ok ? "DONE" : "NEEDED"}
+                  </span>
+                </div>
+                <p className="mt-1 font-mono text-[10px] leading-relaxed text-smoke">{c.hint}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <FirstCustomerPlaybook />
         </section>
 
         {/* source health */}
@@ -207,19 +336,19 @@ export default async function Dashboard({
             </a>
           </div>
           <p className="-mt-2 mb-4 font-mono text-[10px] leading-relaxed tracking-[0.08em] text-faint">
-            MACHINE KA KAAM: jis county mein naye filings aaye, wahan ke licensed
-            wholesalers/distributors khud yahan aa jaate hain. TERA KAAM: inhe email/call karo.
+            THE MACHINE&apos;S JOB: whenever new filings land in a county, the licensed
+            wholesalers/distributors there show up here automatically. YOUR JOB: email/call them.
           </p>
           {!leadSheet ? (
             <p className="rounded-xl border border-line px-6 py-8 font-mono text-xs text-smoke">
-              Lead sheet ready nahi — pehle sources pull karo, phir ye bhar jayega.
+              No lead sheet yet — pull the sources first, then this fills in.
             </p>
           ) : (
             <div className="overflow-hidden rounded-xl border border-line">
               {leadSheet.counties.length === 0 && (
                 <p className="px-6 py-8 font-mono text-xs leading-relaxed text-smoke">
-                  Last 7 days mein koi nayi pending filing nahi. Data pull hone ke baad ye
-                  list apne aap bharti hai. (Runs every sweep — koi manual kaam nahi.)
+                  No new pending filings in the last 7 days. Once data is pulled this
+                  list refills itself. (Runs every sweep — zero manual work.)
                 </p>
               )}
               {leadSheet.counties.map((c) => (

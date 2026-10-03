@@ -18,7 +18,7 @@ export default function GuidesIndex() {
       <div className="mx-auto max-w-4xl px-5 pt-28 pb-20">
         <p className="eyebrow">[ Library · learn the game ]</p>
         <h1 className="font-display mt-5 text-4xl font-medium sm:text-5xl">
-          Guides that turn public records
+          Guides that turn filing intel
           <span className="italic text-amber"> into accounts.</span>
         </h1>
         <p className="mt-4 max-w-xl text-sm leading-relaxed text-smoke">

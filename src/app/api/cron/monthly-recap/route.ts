@@ -5,7 +5,7 @@ import { cronAuthorized } from "@/lib/auth";
 import { runMonthlyRecaps } from "@/lib/digest";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 120;
+export const maxDuration = 60;
 
 export async function GET(req: Request) {
   if (!cronAuthorized(req)) {

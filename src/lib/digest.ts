@@ -1,8 +1,8 @@
 // Shared digest runner used by the cron route and the manual admin trigger.
 import { db } from "@/db";
-import { and, desc, gt, inArray, eq } from "drizzle-orm";
+import { and, desc, gt, inArray, eq, lt, or } from "drizzle-orm";
 import { events, subscribers, type FilingEvent } from "@/db/schema";
-import { sendBriefing, sendDigest, sendMonthlyRecap } from "./email";
+import { sendBriefing, sendDigest, sendMonthlyRecap, sendTrialEnded } from "./email";
 import { matchesIntent } from "./lead-score";
 
 export type DigestReport = {
@@ -11,17 +11,56 @@ export type DigestReport = {
   status: string;
 };
 
+// Expired trials: send the one-time "trial over" email and stop their digests.
+export async function sweepTrials(): Promise<number> {
+  const expired = await db
+    .select()
+    .from(subscribers)
+    .where(
+      and(
+        eq(subscribers.status, "trial"),
+        lt(subscribers.trialEndsAt, new Date()),
+        eq(subscribers.trialNotified, false)
+      )
+    )
+    .limit(100);
+  let notified = 0;
+  for (const sub of expired) {
+    try {
+      await sendTrialEnded(sub);
+      notified++;
+    } catch {
+      // flag regardless so one bad address can't retrigger daily
+    }
+    await db
+      .update(subscribers)
+      .set({ trialNotified: true })
+      .where(eq(subscribers.id, sub.id));
+  }
+  return notified;
+}
+
 export async function runDigest(): Promise<{
   ok: boolean;
   sent: number;
   skipped: number;
   reports: DigestReport[];
 }> {
+  await sweepTrials().catch(() => 0);
   const subs = await db
     .select()
     .from(subscribers)
     .where(
-      and(eq(subscribers.status, "active"), eq(subscribers.emailOptOut, false))
+      and(
+        or(
+          eq(subscribers.status, "active"),
+          and(
+            eq(subscribers.status, "trial"),
+            gt(subscribers.trialEndsAt, new Date())
+          )
+        ),
+        eq(subscribers.emailOptOut, false)
+      )
     )
     .limit(500);
 
@@ -63,6 +102,21 @@ export async function runDigest(): Promise<{
           )
         )
       : raw;
+
+    // Saved searches: city + keyword filters (set on /prefs or via the
+    // "save this search" button on /feed) narrow the digest further.
+    const cityWant = (sub.cityFilter ?? "").trim().toLowerCase();
+    if (cityWant) {
+      evts = evts.filter((e) => (e.city ?? "").toLowerCase().includes(cityWant));
+    }
+    const kwWant = (sub.keywordFilter ?? "").trim().toLowerCase();
+    if (kwWant) {
+      const kws = kwWant.split(/[,\s]+/).filter(Boolean);
+      evts = evts.filter((e) => {
+        const hay = `${e.summary ?? ""} ${e.typeName ?? ""} ${e.tradeName ?? ""} ${e.city ?? ""}`.toLowerCase();
+        return kws.every((k) => hay.includes(k));
+      });
+    }
 
     // Respect the subscriber's requested digest size.
     const cap = sub.digestLimit || 40;
@@ -116,7 +170,16 @@ export async function runBriefings(): Promise<{
     .select()
     .from(subscribers)
     .where(
-      and(eq(subscribers.status, "active"), eq(subscribers.emailOptOut, false))
+      and(
+        or(
+          eq(subscribers.status, "active"),
+          and(
+            eq(subscribers.status, "trial"),
+            gt(subscribers.trialEndsAt, new Date())
+          )
+        ),
+        eq(subscribers.emailOptOut, false)
+      )
     )
     .limit(500);
 
@@ -195,7 +258,16 @@ export async function runMonthlyRecaps(): Promise<{
     .select()
     .from(subscribers)
     .where(
-      and(eq(subscribers.status, "active"), eq(subscribers.emailOptOut, false))
+      and(
+        or(
+          eq(subscribers.status, "active"),
+          and(
+            eq(subscribers.status, "trial"),
+            gt(subscribers.trialEndsAt, new Date())
+          )
+        ),
+        eq(subscribers.emailOptOut, false)
+      )
     )
     .limit(500);
 

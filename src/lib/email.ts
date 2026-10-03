@@ -143,6 +143,64 @@ export function digestHtml(sub: Subscriber, evts: FilingEvent[]): string {
 
 export type SendStatus = "sent" | "dry_run" | "error";
 
+// Trial over — one email, then digests stop until they upgrade.
+export async function sendTrialEnded(sub: {
+  email: string;
+  states: string;
+}): Promise<{ status: SendStatus; detail: string }> {
+  const subject = "Your 7-day trial just ended";
+  let status: SendStatus = "dry_run";
+  let detail = "RESEND_API_KEY not set — trial-ended email logged, not sent";
+  const key = process.env.RESEND_API_KEY;
+  if (key && missingAddress(sub.email)) {
+    status = "error";
+    detail = "postal address missing (CAN-SPAM)";
+  } else if (key) {
+    try {
+      const unsubscribe = unsubscribeUrls(sub.email);
+      const resend = new Resend(key);
+      const result = await resend.emails.send({
+        from: alertFrom(),
+        to: sub.email,
+        replyTo: PUBLIC_CONFIG.contactEmail,
+        subject,
+        headers: {
+          "List-Unsubscribe": `<${unsubscribe.oneClick}>`,
+          "List-Unsubscribe-Post": "List-Unsubscribe=One-Post",
+        },
+        html: `<!doctype html><html><body style="margin:0;background:#0b0906;color:#f2ead9;font-family:Georgia,serif">
+          <div style="max-width:620px;margin:auto;padding:36px 20px">
+            <div style="font-size:11px;letter-spacing:0.25em;color:#e9a13b;text-transform:uppercase;font-family:monospace">${esc(BRAND.name)}</div>
+            <h1 style="font-size:26px;margin:12px 0 4px">Your trial week is up.</h1>
+            <p style="color:#8d8375;font-size:14px;line-height:1.7">For seven days you saw every new filing in <strong style="color:#f2ead9">${esc(sub.states)}</strong> the morning it posted. That was the full paid service — no watered-down version.</p>
+            <p style="color:#8d8375;font-size:14px;line-height:1.7">While you were trialing, venues in your territory kept filing. The ones you missed are still callable.</p>
+            <p style="margin:28px 0"><a href="${process.env.NEXT_PUBLIC_SITE_URL ?? "https://lastcallleads.com"}/#pricing" style="background:#e9a13b;color:#1a0e12;padding:12px 24px;border-radius:999px;font-family:monospace;font-size:13px;font-weight:700;letter-spacing:0.08em;text-decoration:none">KEEP THE ALERTS COMING →</a></p>
+            <p style="color:#8d8375;font-size:11px;line-height:1.7;font-family:monospace">
+              <a href="${unsubscribe.page}" style="color:#e9a13b">Stop alert emails</a><br/>
+              ${esc(PUBLIC_CONFIG.legalName)} · ${esc(PUBLIC_CONFIG.postalAddress)}
+            </p>
+          </div>
+        </html></body>`,
+      });
+      if (result.error) {
+        status = "error";
+        detail = String(result.error);
+      } else {
+        status = "sent";
+        detail = "trial ended notice sent";
+      }
+    } catch (err) {
+      status = "error";
+      detail = err instanceof Error ? err.message : String(err);
+    }
+  }
+  await db
+    .insert(emailLog)
+    .values({ toEmail: sub.email, subject, status, detail })
+    .catch(() => undefined);
+  return { status, detail };
+}
+
 // CAN-SPAM requires a valid physical postal address on every commercial email.
 // We refuse to send to real customers without one — but the owner can always
 // email themselves, so the pipeline can be tested before an address is bought.
@@ -281,7 +339,7 @@ export async function sendMonthlyRecap(input: {
               <p style="margin:0;color:#f2ead9;font-weight:700">Want to lower your monthly cost?</p>
               <p style="margin:8px 0 0;color:#8d8375;font-size:13px;line-height:1.7">Annual prepay is simple: pay 10 months, get 12 months. Reply “annual” and we will switch you manually.</p>
               <p style="margin:8px 0 0;color:#8d8375;font-size:13px;line-height:1.7">Refer one paying rep and get your next month free. Reply “referral” and we will send your intro text.</p>
-              ${bookingUrl ? `<p style="margin:8px 0 0;color:#8d8375;font-size:13px;line-height:1.7">Want a 15-minute territory review? <a href="${bookingUrl}" style="color:#e9a13b">Book it here</a>.</p>` : `<p style="margin:8px 0 0;color:#8d8375;font-size:13px;line-height:1.7">Want a 15-minute territory review? Reply with two times that work.</p>`}
+              <p style="margin:8px 0 0;color:#8d8375;font-size:13px;line-height:1.7">Questions about your territory or lead types? Just reply — a human reads every email.</p>
             </div>
             <p style="color:#8d8375;font-size:11px;margin-top:22px;line-height:1.7;font-family:monospace">
               <a href="${unsubscribe.page}" style="color:#e9a13b">Stop alert emails</a> ·

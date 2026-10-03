@@ -3,6 +3,26 @@ import { ImageResponse } from "next/og";
 export const size = { width: 64, height: 64 };
 export const contentType = "image/png";
 
+// Bold glass + last drop on an oxblood tile. Solid shapes only — crisp at 16px.
+function Glass({ s, drop = true }: { s: number; drop?: boolean }) {
+  return (
+    <svg width={s} height={s} viewBox="0 0 48 48" fill="none">
+      {drop && (
+        <path
+          d="M24 1.6c1.4 1.9 2.2 3.3 2.2 4.4a2.2 2.2 0 1 1-4.4 0c0-1.1.8-2.5 2.2-4.4Z"
+          fill="#e8b054"
+        />
+      )}
+      <g transform={drop ? "translate(0 5.5)" : undefined}>
+        <path
+          d="M7.5 7h33v4c0 4.6-1.7 8.8-4.4 11.9-2.5 2.9-5.7 4.8-9.3 5.4V36h7.2v4.8h-20V36h7.2v-7.7c-3.6-.6-6.8-2.5-9.3-5.4C9.2 19.8 7.5 15.6 7.5 11V7Z"
+          fill="#e8b054"
+        />
+      </g>
+    </svg>
+  );
+}
+
 export default function Icon() {
   return new ImageResponse(
     (
@@ -13,15 +33,11 @@ export default function Icon() {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          background: "#140a0e",
+          background: "#42161e",
           borderRadius: 14,
         }}
       >
-        <svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="#e9a13b" strokeWidth="2">
-          <path d="M8 22h8" strokeLinecap="round" />
-          <path d="M12 15v7" strokeLinecap="round" />
-          <path d="M5 3h14l-1.5 8.5a5.5 5.5 0 0 1-11 0L5 3Z" strokeLinejoin="round" />
-        </svg>
+        <Glass s={50} />
       </div>
     ),
     { ...size }

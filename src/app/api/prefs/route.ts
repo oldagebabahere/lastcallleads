@@ -9,9 +9,10 @@ import { eq } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
-const VALID_STATES = new Set([
-  "TX", "NY", "CA", "IL", "WA", "OR", "MO", "CO", "CT", "MD",
-]);
+// All 50 states + DC — matches the subscribe route.
+const VALID_STATES = new Set(
+  "AL AK AZ AR CA CO CT DC DE FL GA HI IA ID IL IN KS KY LA MA MD ME MI MN MO MS MT NC ND NE NH NJ NM NV NY OH OK OR PA RI SC SD TN TX UT VA VT WA WI WV WY".split(" ")
+);
 const VALID_TAGS = new Set(INTENT_TAGS.map((t) => t.id));
 
 function readAuth(req: Request) {
@@ -46,6 +47,8 @@ export async function GET(req: Request) {
       states: sub.states.split(",").filter(Boolean),
       zipFilter: sub.zipFilter ?? "",
       typeFilter: sub.typeFilter ?? "",
+      cityFilter: sub.cityFilter ?? "",
+      keywordFilter: sub.keywordFilter ?? "",
       digestLimit: sub.digestLimit,
       status: sub.status,
     },
@@ -62,6 +65,8 @@ export async function POST(req: Request) {
     states?: string[];
     zipFilter?: string;
     typeFilter?: string;
+    cityFilter?: string;
+    keywordFilter?: string;
     digestLimit?: number;
   };
   try {
@@ -72,7 +77,8 @@ export async function POST(req: Request) {
 
   const states = (body.states ?? [])
     .map((s) => String(s).trim().toUpperCase())
-    .filter((s) => VALID_STATES.has(s));
+    .filter((s) => VALID_STATES.has(s))
+    .slice(0, 3);
 
   // ZIP codes: keep only 5-digit, dedupe, cap at 25 (protects the query).
   const zips = String(body.zipFilter ?? "")
@@ -87,6 +93,9 @@ export async function POST(req: Request) {
     .filter((t) => VALID_TAGS.has(t))
     .slice(0, 8);
 
+  const city = String(body.cityFilter ?? "").trim().slice(0, 120);
+  const keywords = String(body.keywordFilter ?? "").trim().slice(0, 240);
+
   const limit = Math.min(200, Math.max(5, Number(body.digestLimit) || 40));
 
   await ensureSchema();
@@ -96,6 +105,8 @@ export async function POST(req: Request) {
       states: states.length ? states.join(",") : "TX",
       zipFilter: zips.length ? zips.join(",") : null,
       typeFilter: tags.length ? tags.join(",") : null,
+      cityFilter: city.length ? city.toLowerCase() : null,
+      keywordFilter: keywords.length ? keywords.toLowerCase() : null,
       digestLimit: limit,
     })
     .where(eq(subscribers.email, email))

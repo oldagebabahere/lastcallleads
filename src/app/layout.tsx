@@ -1,14 +1,22 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
-import { Playfair_Display, EB_Garamond, JetBrains_Mono } from "next/font/google";
+import { Playfair_Display, EB_Garamond, Inter_Tight, JetBrains_Mono } from "next/font/google";
 import { BRAND } from "@/lib/brand";
+import ScrollProgress from "@/components/scroll-progress";
 import "./globals.css";
 
-// Wine-bar / premium label feel: an elegant luxury serif for headlines,
-// a warm readable serif for body (the kind you see on a tasting menu).
-const display = Playfair_Display({
+// Editorial mix: a light modern grotesque for headlines (the "premium animated
+// site" look), Playfair italics for accent phrases (the bar-luxe brand voice),
+// a warm readable serif for body, mono for registry/terminal details.
+const display = Inter_Tight({
   subsets: ["latin"],
   variable: "--font-display",
+  weight: ["300", "400", "500", "600", "700"],
+});
+
+const serifAccent = Playfair_Display({
+  subsets: ["latin"],
+  variable: "--font-serif-accent",
   style: ["normal", "italic"],
   weight: ["400", "500", "600", "700"],
 });
@@ -44,22 +52,38 @@ export const metadata: Metadata = {
     "bar opening leads",
     "distributor sales leads",
   ],
+  alternates: {
+    canonical: "/",
+  },
   openGraph: {
-    title: "PourWatch — new liquor filings, before the doors open",
+    title: `${BRAND.name} — new liquor filings, before the doors open`,
     description:
       "Applications filed = buyers deciding in the next 60–90 days. Be the first call.",
     type: "website",
+    siteName: BRAND.name,
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: `${BRAND.name} — new liquor filings, before the doors open`,
+    description:
+      "Applications filed = buyers deciding in the next 60–90 days. Be the first call.",
   },
 };
 
 export const viewport: Viewport = {
-  themeColor: "#140a0e",
+  themeColor: "#0b0709",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" className={`${display.variable} ${sans.variable} ${mono.variable}`}>
-      <body className="grain">{children}</body>
+    <html
+      lang="en"
+      className={`${display.variable} ${serifAccent.variable} ${sans.variable} ${mono.variable}`}
+    >
+      <body className="grain">
+        <ScrollProgress />
+        {children}
+      </body>
     </html>
   );
 }

@@ -171,7 +171,7 @@ export const TYPE_LIBRARY: LicenseType[] = [
       "For ingredient suppliers, packaging vendors and service providers, brewer filings are the top of the funnel for multi-year accounts.",
     ],
     faq: [
-      { q: "Do breweries need a liquor license?", a: "Yes — manufacturing, storage, and sales all require specific permits, and filings are part of the public record." },
+      { q: "Do breweries need a liquor license?", a: "Yes — manufacturing, storage, and sales all require specific permits, and filings are part of the official record." },
       { q: "What's the difference between B and BP?", a: "B is manufacturing/wholesale focused; BP adds on-premise retail sale with food. Most operations hold one or the other, occasionally both in related entities." },
     ],
   },

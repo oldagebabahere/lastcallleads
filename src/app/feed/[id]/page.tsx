@@ -3,10 +3,13 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, LockKeyhole, MapPin } from "lucide-react";
 import type { Metadata } from "next";
-import { db } from "@/db";
+import { db, pool } from "@/db";
+import { subscribers } from "@/db/schema";
+import { verifyUnsubscribeToken } from "@/lib/unsubscribe";
 import { ensureSchema } from "@/db/bootstrap";
 import { events } from "@/db/schema";
-import { EventBadge, Footer, Nav, StatePill, fmtDate } from "@/components/ui";
+import { EventBadge, Footer, Nav, StatePill } from "@/components/ui";
+import { fmtDate } from "@/lib/fmt";
 import { citySlug, embargoCutoff, maskName } from "@/lib/queries";
 import { BRAND } from "@/lib/brand";
 
@@ -39,10 +42,13 @@ export async function generateMetadata({
 
 export default async function LeadPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ email?: string; token?: string }>;
 }) {
   const { id } = await params;
+  const { email, token } = await searchParams;
   await ensureSchema();
 
   const rows = await db.select().from(events).where(eq(events.id, Number(id))).limit(1);
@@ -50,7 +56,56 @@ export default async function LeadPage({
   if (!e) notFound();
 
   const cut = embargoCutoff();
-  const locked = e.occurredAt ? e.occurredAt.getTime() > cut.getTime() : false;
+  let locked = e.occurredAt ? e.occurredAt.getTime() > cut.getTime() : false;
+
+  // Texas goldmine: does this venue report alcohol receipts? (monthly,
+  // public Comptroller data — shows which fish is worth calling first)
+  let revenue: { total: number; periodEnd: string } | null = null;
+  if (e.state === "TX") {
+    try {
+      const names = [e.tradeName, e.ownerName]
+        .map((n) => (n ?? "").trim().toLowerCase())
+        .filter(Boolean);
+      if (names.length) {
+        const r = await pool.query<{ total: number; period_end: string }>(
+          `SELECT total, period_end FROM venue_receipts
+           WHERE lower(trade_name) = ANY($1::text[])
+           ORDER BY period_end DESC LIMIT 1`,
+          [names]
+        );
+        if (r.rows[0]?.total > 0) {
+          revenue = {
+            total: Number(r.rows[0].total),
+            periodEnd: r.rows[0].period_end,
+          };
+        }
+      }
+    } catch {
+      // receipts table optional
+    }
+  }
+
+  // Active subscribers coming from their digest email unlock the page
+  // immediately — they already paid for same-day details.
+  if (locked && email && token) {
+    try {
+      if (verifyUnsubscribeToken(email.trim().toLowerCase(), token)) {
+        const subs = await db
+          .select({ status: subscribers.status, trialEndsAt: subscribers.trialEndsAt })
+          .from(subscribers)
+          .where(eq(subscribers.email, email.trim().toLowerCase()))
+          .limit(1);
+        const s = subs[0];
+        const trialLive =
+          s?.status === "trial" &&
+          s.trialEndsAt &&
+          new Date(s.trialEndsAt).getTime() > Date.now();
+        if (s?.status === "active" || trialLive) locked = false;
+      }
+    } catch {
+      // unlock must never break the page
+    }
+  }
   const name = locked
     ? maskName(e.tradeName ?? e.ownerName ?? "Applicant")
     : e.tradeName ?? e.ownerName ?? "Unnamed applicant";
@@ -104,13 +159,41 @@ export default async function LeadPage({
             <Field label="City" value={e.city ?? "—"} />
             <Field label="County" value={e.county ?? "—"} />
             <Field label="Filed / occurred" value={fmtDate(e.occurredAt)} />
-            <Field label="Detected by PourWatch" value={fmtDate(e.detectedAt)} />
+            <Field label="First detected" value={fmtDate(e.detectedAt)} />
           </div>
           {!locked && (
             <div className="border-t border-line px-7 py-5">
               <p className="flex items-center gap-2 font-mono text-[11px] leading-relaxed tracking-[0.1em] text-smoke">
                 <MapPin className="h-3.5 w-3.5 text-amber" />
                 {[e.city, e.county, e.state].filter(Boolean).join(" · ")}
+              </p>
+              {/* maps enrichment — one click to the venue, no API key needed */}
+              <div className="mt-3 flex flex-wrap gap-2">
+                {(() => {
+                  const q = encodeURIComponent(
+                    [name, e.city, e.state].filter(Boolean).join(" ")
+                  );
+                  const links = [
+                    { label: "GOOGLE MAPS", href: `https://www.google.com/maps/search/?api=1&query=${q}` },
+                    { label: "DIRECTIONS", href: `https://www.google.com/maps/dir/?api=1&destination=${q}` },
+                    { label: "STREET VIEW", href: `https://www.google.com/maps/search/?api=1&query=${q}&layer=c` },
+                    { label: "OSM", href: `https://www.openstreetmap.org/search?query=${q}` },
+                  ];
+                  return links.map((l) => (
+                    <a
+                      key={l.label}
+                      href={l.href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="rounded-md border border-amber/40 bg-amber/10 px-3 py-1.5 font-mono text-[10px] font-semibold tracking-[0.12em] text-amber transition-colors hover:bg-amber hover:text-ink"
+                    >
+                      {l.label} ↗
+                    </a>
+                  ));
+                })()}
+              </div>
+              <p className="mt-2 font-mono text-[9px] tracking-[0.1em] text-faint">
+                VENUE RATING/PHOTOS MAPS PE EK CLICK — SALES CALL SE PEHLE DEKH LO
               </p>
             </div>
           )}
@@ -120,7 +203,7 @@ export default async function LeadPage({
           <div className="mt-6 rounded-xl border border-amber/40 bg-gradient-to-b from-amber/15 to-panel p-7">
             <div className="flex items-center gap-3">
               <LockKeyhole className="h-5 w-5 text-amber" />
-              <p className="font-display text-xl font-medium">This filing is {Math.max(1, Math.ceil(((e.occurredAt?.getTime() ?? 0) - cut.getTime()) / 86_400_000))} day(s) ahead of the free feed.</p>
+              <p className="font-display text-xl font-medium">Members saw this filing {Math.max(1, Math.ceil(((e.occurredAt?.getTime() ?? 0) - cut.getTime()) / 86_400_000))} day(s) before the public preview.</p>
             </div>
             <p className="mt-3 max-w-lg text-sm leading-relaxed text-smoke">
               Subscribers saw the full name and details the morning it posted — while this
@@ -132,6 +215,26 @@ export default async function LeadPage({
             >
               UNLOCK SAME-DAY ALERTS
             </Link>
+          </div>
+        )}
+
+        {revenue && (
+          <div className="mt-6 rounded-xl border border-amber/50 bg-gradient-to-b from-amber/20 to-panel p-6">
+            <div className="flex flex-wrap items-baseline justify-between gap-3">
+              <div>
+                <p className="font-mono text-[10px] tracking-[0.2em] text-amber">
+                  ALCOHOL RECEIPTS · TEXAS COMPTROLLER
+                </p>
+                <p className="mt-2 font-display text-4xl font-light text-cream">
+                  ${Math.round(revenue.total).toLocaleString()}
+                  <span className="text-lg text-smoke"> /month</span>
+                </p>
+              </div>
+              <p className="max-w-xs font-mono text-[10px] leading-relaxed tracking-[0.08em] text-smoke">
+                REPORTING PERIOD ENDING {revenue.periodEnd} — A VENUE THIS SIZE
+                IS WORTH CALLING FIRST
+              </p>
+            </div>
           </div>
         )}
 

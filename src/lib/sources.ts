@@ -74,7 +74,14 @@ export function safeDate(value: unknown): Date | null {
   const s = clean(value);
   if (!s) return null;
   const d = new Date(s);
-  return Number.isNaN(d.getTime()) ? null : d;
+  if (Number.isNaN(d.getTime())) return null;
+  // Guard against registry typos — Colorado's feed, for example, ships
+  // issue dates like "2262-04-01". Anything before 1990 or more than a
+  // year out is treated as corrupt, not as a real filing date.
+  const y = d.getFullYear();
+  const maxYear = new Date().getFullYear() + 1;
+  if (y < 1990 || y > maxYear) return null;
+  return d;
 }
 
 export function cleanZip(value: unknown): string | null {

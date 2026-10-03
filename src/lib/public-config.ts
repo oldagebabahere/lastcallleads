@@ -3,6 +3,7 @@ import { BRAND } from "@/lib/brand";
 export const PUBLIC_CONFIG = {
   contactEmail:
     process.env.NEXT_PUBLIC_CONTACT_EMAIL?.trim() || "support@lastcallleads.com",
+  founderName: process.env.NEXT_PUBLIC_FOUNDER_NAME?.trim() || "",
   legalName:
     process.env.NEXT_PUBLIC_BUSINESS_LEGAL_NAME?.trim() || BRAND.name,
   postalAddress:

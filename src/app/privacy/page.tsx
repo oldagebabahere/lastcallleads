@@ -47,7 +47,7 @@ export default function PrivacyPage() {
       <LegalSection title="7. Your choices and rights">
         <p>You may ask to access, correct or delete information you submitted, subject to legal retention requirements. Every digest includes an email opt-out. Opting out of alerts does not automatically cancel a paid subscription; contact support or use the payment provider to cancel billing.</p>
       </LegalSection>
-      <LegalSection title="8. Public records">
+      <LegalSection title="8. Data sources">
         <p>Liquor-license information originates from government sources and is presented for business intelligence and public-interest research. If a source record is corrected, send us the official URL so we can review our copy.</p>
       </LegalSection>
       <LegalSection title="9. Security and children">

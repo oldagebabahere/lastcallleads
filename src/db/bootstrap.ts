@@ -63,6 +63,49 @@ CREATE TABLE IF NOT EXISTS ingest_runs (
 );
 CREATE INDEX IF NOT EXISTS ingest_source_idx ON ingest_runs (source);
 
+-- Events dedup: the same filing can be written by the legacy runner AND the
+-- aggregator (both legitimately cover TX/NY/CA), and any re-run after an ID
+-- format change would re-insert old filings as "new". One event per
+-- (license, type) — duplicates are removed before the index is created.
+DELETE FROM events e
+  USING events d
+  WHERE e.license_key IS NOT NULL
+    AND e.license_key = d.license_key
+    AND e.event_type = d.event_type
+    AND e.id > d.id;
+CREATE UNIQUE INDEX IF NOT EXISTS events_key_type_uidx ON events (license_key, event_type);
+
+CREATE TABLE IF NOT EXISTS venue_receipts (
+  id SERIAL PRIMARY KEY,
+  permit TEXT NOT NULL,
+  trade_name TEXT,
+  city TEXT,
+  county TEXT,
+  state TEXT NOT NULL DEFAULT 'TX',
+  period_end TEXT,
+  total DOUBLE PRECISION NOT NULL DEFAULT 0,
+  liquor DOUBLE PRECISION,
+  wine DOUBLE PRECISION,
+  beer DOUBLE PRECISION,
+  first_seen_at TIMESTAMP NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS venue_receipts_uidx ON venue_receipts (permit, period_end);
+
+CREATE TABLE IF NOT EXISTS source_health (
+  id SERIAL PRIMARY KEY,
+  source TEXT NOT NULL UNIQUE,
+  state TEXT NOT NULL DEFAULT 'US',
+  status TEXT NOT NULL DEFAULT 'live',
+  paused_reason TEXT,
+  consecutive_failures INTEGER NOT NULL DEFAULT 0,
+  last_rows INTEGER NOT NULL DEFAULT 0,
+  median_rows INTEGER NOT NULL DEFAULT 0,
+  last_ok_at TIMESTAMP,
+  last_run_at TIMESTAMP,
+  last_probe_at TIMESTAMP,
+  alert_state TEXT NOT NULL DEFAULT 'none',
+  updated_at TIMESTAMP NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS subscribers (
   id SERIAL PRIMARY KEY,
   email TEXT NOT NULL UNIQUE,
@@ -81,10 +124,33 @@ CREATE TABLE IF NOT EXISTS subscribers (
   last_digest_at TIMESTAMP,
   created_at TIMESTAMP NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS prospects (
+  id SERIAL PRIMARY KEY,
+  category TEXT NOT NULL,
+  osm_key TEXT NOT NULL,
+  name TEXT NOT NULL,
+  phone TEXT,
+  website TEXT,
+  address TEXT,
+  city TEXT,
+  state TEXT NOT NULL,
+  lat DOUBLE PRECISION,
+  lng DOUBLE PRECISION,
+  first_seen_at TIMESTAMP NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS prospects_cat_osm ON prospects (category, osm_key);
+CREATE INDEX IF NOT EXISTS prospects_state_idx ON prospects (state);
+
 ALTER TABLE subscribers ADD COLUMN IF NOT EXISTS ref_by TEXT;
+ALTER TABLE subscribers ADD COLUMN IF NOT EXISTS referral_credits INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE subscribers ADD COLUMN IF NOT EXISTS type_filter TEXT;
+ALTER TABLE subscribers ADD COLUMN IF NOT EXISTS city_filter TEXT;
+ALTER TABLE subscribers ADD COLUMN IF NOT EXISTS keyword_filter TEXT;
 ALTER TABLE subscribers ADD COLUMN IF NOT EXISTS prefs_token TEXT;
 ALTER TABLE subscribers ADD COLUMN IF NOT EXISTS digest_limit INTEGER NOT NULL DEFAULT 40;
+ALTER TABLE subscribers ADD COLUMN IF NOT EXISTS trial_ends_at TIMESTAMP;
+ALTER TABLE subscribers ADD COLUMN IF NOT EXISTS trial_notified BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE source_health ADD COLUMN IF NOT EXISTS override_dataset TEXT;
 
 ALTER TABLE subscribers ADD COLUMN IF NOT EXISTS email_opt_out BOOLEAN NOT NULL DEFAULT false;
 

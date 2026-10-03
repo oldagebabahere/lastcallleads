@@ -91,6 +91,8 @@ export function timeAgo(d: Date | string | null | undefined): string {
   if (!d) return "—";
   const date = typeof d === "string" ? new Date(d) : d;
   if (Number.isNaN(date.getTime())) return "—";
+  // Corrupt future dates (registry typos like "2262") never reach the UI.
+  if (date.getTime() > Date.now() + 86_400_000) return "—";
   const secs = Math.floor((Date.now() - date.getTime()) / 1000);
   if (secs < 3600) return `${Math.max(1, Math.floor(secs / 60))}m ago`;
   if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;

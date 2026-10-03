@@ -102,7 +102,7 @@ export default async function GuidePage({
               GET MORNING ALERTS
             </Link>
             <Link href="/feed" className="rounded-full border border-line px-6 py-3 font-mono text-[11px] tracking-[0.12em] text-smoke hover:text-cream">
-              BROWSE FREE FEED <ArrowRight className="ml-1 inline h-3 w-3" />
+              BROWSE LIVE FILINGS <ArrowRight className="ml-1 inline h-3 w-3" />
             </Link>
           </div>
         </div>

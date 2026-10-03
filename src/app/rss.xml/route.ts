@@ -62,7 +62,7 @@ export async function GET() {
   <channel>
     <title>${escapeXml(BRAND.name)} — Live Liquor License Filings Feed</title>
     <link>${base}</link>
-    <description>Daily public record feed of newly filed liquor license applications and newly issued licenses in Texas and New York.</description>
+    <description>Daily confidential intel feed of newly filed liquor license applications and newly issued licenses across every covered state.</description>
     <language>en-us</language>
     <lastBuildDate>${new Date().toUTCString()}</lastBuildDate>
     <atom:link href="${base}/rss.xml" rel="self" type="application/rss+xml"/>

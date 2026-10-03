@@ -105,12 +105,12 @@ export default function RoiCalculator() {
                 {roiMultiple}x Return
               </span>
             </div>
-            <Link
+            <a
               href="#pricing"
               className="mt-4 flex items-center justify-center gap-2 rounded-lg bg-amber py-3 font-mono text-xs font-semibold tracking-[0.12em] text-ink transition-transform hover:scale-[1.02]"
             >
               LOCK IN YOUR TERRITORY <ArrowRight className="h-4 w-4" />
-            </Link>
+            </a>
           </div>
         </div>
       </div>

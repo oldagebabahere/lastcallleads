@@ -31,7 +31,7 @@ export default function PartnerPage() {
         <div className="mt-12 grid gap-4 sm:grid-cols-3">
           {[
             [Link2, "Get your link", "Your partner link is unique to you. Share it anywhere — email, group, LinkedIn, your own clients."],
-            [Users, "They subscribe", "Anyone who signs up through your link is tracked to you automatically. No forms, no paperwork."],
+            [Users, "They subscribe", "Anyone who signs up through your link is credited to you — we confirm every referral by email. No paperwork."],
             [BadgeDollarSign, "You earn monthly", "$52 per active customer, every month they pay. Payouts as you grow."],
           ].map(([Icon, title, body], i) => {
             const I = Icon as typeof Link2;

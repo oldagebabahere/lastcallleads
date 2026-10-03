@@ -86,7 +86,7 @@ export const GUIDES: Guide[] = [
         h2: "How long licensing actually takes",
         body: [
           "A straightforward Texas application through the AIMS portal typically clears in 30 to 60 days. Locations near schools or churches, ownership changes, and protested applications stretch that to 90 days or more. Temporary permits exist for some situations but are not a shortcut for a new bar.",
-          "For anyone watching the market, the important date is not approval — it is the submission date. That is the moment a new venue becomes visible in the public record, months before their first pour.",
+          "For anyone watching the market, the important date is not approval — it is the submission date. That is the moment a new venue becomes visible in the filing data, months before their first pour.",
         ],
       },
       {

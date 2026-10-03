@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import { ArrowRight, CheckCircle2, LoaderCircle } from "lucide-react";
+import StatePicker from "@/components/state-picker";
 
 type Phase = "idle" | "sending" | "waitlist" | "error";
 
@@ -75,23 +76,19 @@ export default function SubscribeForm({ plan }: { plan: "solo" | "pro" }) {
     <form onSubmit={submit} className="space-y-3">
       <div>
         <p className="font-mono text-[10px] tracking-[0.18em] text-faint">
-          PICK YOUR TERRITORY
+          PICK YOUR TERRITORY — ALL 50 STATES
         </p>
-        <div className="mt-2 flex flex-wrap gap-2">
-          {["TX", "NY", "CA", "IL", "WA", "OR", "MO", "CO", "CT", "MD"].map((s) => (
-            <button
-              key={s}
-              type="button"
-              onClick={() => toggleState(s)}
-              className={`rounded-md border px-3 py-2 font-mono text-[11px] tracking-[0.15em] transition-colors ${
-                states.includes(s)
-                  ? "border-amber/60 bg-amber/15 text-amber"
-                  : "border-line bg-panel text-smoke hover:text-cream"
-              }`}
-            >
-              {s}
-            </button>
-          ))}
+        <div className="mt-2">
+          <StatePicker
+            selected={states}
+            onToggle={toggleState}
+            max={plan === "solo" ? 1 : 3}
+          />
+          <p className="mt-2 font-mono text-[10px] tracking-[0.1em] text-faint">
+            {plan === "solo"
+              ? "TERRITORY PLAN = 1 STATE · UPGRADE ANYTIME FOR MORE"
+              : "MULTI-STATE PLAN = UP TO 3 STATES · NEED ALL 50? ENTERPRISE"}
+          </p>
         </div>
       </div>
       <div className="flex gap-2">
