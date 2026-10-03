@@ -316,7 +316,7 @@ export default async function Home() {
                 <li>· Names unlock after 7 days</li>
                 <li>· All covered states</li>
               </ul>
-              <Link href="/feed" className="btn-ghost-ink mt-8 justify-center py-2.5 font-mono text-[11px] tracking-[0.12em]">
+              <Link href="/feed" className="btn-ghost-ink mt-auto justify-center py-2.5 font-mono text-[11px] tracking-[0.12em]">
                 OPEN FEED
               </Link>
             </div>
@@ -326,7 +326,7 @@ export default async function Home() {
               <span className="absolute left-1/2 top-0 z-10 -translate-x-1/2 -translate-y-1/2 rounded-full bg-mint px-3 py-1 font-mono text-[9px] font-bold tracking-[0.2em] text-[#06231a]">
                 MOST PICKED
               </span>
-              <div id="dock-slot" className="dock-slot flex h-60 items-center justify-center md:h-64">
+              <div id="dock-slot" className="dock-slot flex h-40 items-center justify-center md:h-44">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   id="slot-bottle"
@@ -334,7 +334,7 @@ export default async function Home() {
                   alt="Last Call Leads bottle"
                   width={306}
                   height={1200}
-                  className="slot-bottle h-52 w-auto md:h-56"
+                  className="slot-bottle h-36 w-auto md:h-40"
                 />
               </div>
               <p className="mt-5 font-mono text-[11px] tracking-[0.2em] text-wine2">TERRITORY</p>

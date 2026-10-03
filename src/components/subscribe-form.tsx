@@ -76,7 +76,7 @@ export default function SubscribeForm({ plan }: { plan: "solo" | "pro" }) {
     <form onSubmit={submit} className="space-y-3">
       <div>
         <p className="font-mono text-[10px] tracking-[0.18em] text-faint">
-          PICK YOUR TERRITORY — ALL 50 STATES
+          {plan === "solo" ? "PICK YOUR STATE" : "PICK UP TO 3 STATES"}
         </p>
         <div className="mt-2">
           <StatePicker
@@ -84,11 +84,6 @@ export default function SubscribeForm({ plan }: { plan: "solo" | "pro" }) {
             onToggle={toggleState}
             max={plan === "solo" ? 1 : 3}
           />
-          <p className="mt-2 font-mono text-[10px] tracking-[0.1em] text-faint">
-            {plan === "solo"
-              ? "TERRITORY PLAN = 1 STATE · UPGRADE ANYTIME FOR MORE"
-              : "MULTI-STATE PLAN = UP TO 3 STATES · NEED ALL 50? ENTERPRISE"}
-          </p>
         </div>
       </div>
       <div className="flex gap-2">

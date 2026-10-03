@@ -1,13 +1,11 @@
 "use client";
 
-// Searchable US-state territory picker. Customer types "tx", "fla", "new
-// york" — matching states filter live; click adds a chip, ✕ removes.
-// Solves the "50 states but only 12 buttons" problem.
+// Searchable US-state territory picker — compact edition.
+// One search row + one chip row. Customer types "tx", "fla", "new york";
+// matching states filter live; click adds a chip, ✕ removes.
 import { useMemo, useRef, useState } from "react";
-import { X } from "lucide-react";
+import { Search, X } from "lucide-react";
 import { US_STATES } from "@/lib/states";
-
-const POPULAR = ["TX", "NY", "CA", "FL", "IL", "GA", "PA", "OH"];
 
 export default function StatePicker({
   selected,
@@ -27,8 +25,7 @@ export default function StatePicker({
     if (!needle) return US_STATES;
     return US_STATES.filter(
       ([code, name]) =>
-        code.toLowerCase().startsWith(needle) ||
-        name.toLowerCase().includes(needle)
+        code.toLowerCase().startsWith(needle) || name.toLowerCase().includes(needle)
     );
   }, [q]);
 
@@ -38,6 +35,7 @@ export default function StatePicker({
     <div ref={boxRef} className="rounded-lg border border-line bg-panel">
       {/* search field */}
       <div className="flex items-center gap-2 border-b border-line px-3 py-2.5">
+        <Search className="h-3.5 w-3.5 shrink-0 text-faint" />
         <input
           value={q}
           onChange={(e) => {
@@ -46,7 +44,7 @@ export default function StatePicker({
           }}
           onFocus={() => setOpen(true)}
           onBlur={() => setTimeout(() => setOpen(false), 180)}
-          placeholder={`Search states — TX, Florida…  (${selected.length}/${max} picked)`}
+          placeholder={`Search states — TX, Florida…  (${selected.length}/${max})`}
           className="w-full bg-transparent text-sm text-cream placeholder:text-faint focus:outline-none"
         />
         {selected.length > 0 && (
@@ -98,7 +96,7 @@ export default function StatePicker({
         </div>
       )}
 
-      {/* selected chips + quick picks */}
+      {/* selected chips — one tidy row */}
       <div className="flex flex-wrap items-center gap-2 px-3 py-2.5">
         {selected.map((s) => (
           <button
@@ -116,25 +114,6 @@ export default function StatePicker({
           </span>
         )}
       </div>
-
-      {/* one-tap popular row (hidden on single-state plans — noise there) */}
-      {max > 1 && (
-      <div className="flex flex-wrap items-center gap-1.5 border-t border-line px-3 py-2.5">
-        <span className="mr-1 font-mono text-[9px] tracking-[0.15em] text-faint">
-          QUICK ADD
-        </span>
-        {POPULAR.filter((s) => !selected.includes(s)).map((s) => (
-          <button
-            key={s}
-            type="button"
-            onClick={() => onToggle(s)}
-            className="rounded border border-line px-2 py-1 font-mono text-[10px] tracking-[0.12em] text-smoke transition-colors hover:border-amber/50 hover:text-amber"
-          >
-            + {s}
-          </button>
-        ))}
-      </div>
-      )}
     </div>
   );
 }
