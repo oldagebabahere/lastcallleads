@@ -48,7 +48,6 @@ export default function BottleStage() {
   const glassRef = useRef<HTMLDivElement>(null);
   const streamRef = useRef<HTMLDivElement>(null);
   const liquidRef = useRef<HTMLDivElement>(null);
-  const heroGlassRef = useRef<HTMLDivElement>(null);
   const lenisRef = useRef<Lenis | null>(null);
 
   useEffect(() => {
@@ -114,29 +113,6 @@ export default function BottleStage() {
     }
 
     document.body.dataset.vesper = "on";
-
-    /* ---------- HERO NEON GLASS — pre-filled, greets you beside the bottle ---------- */
-    const heroGlass = heroGlassRef.current;
-    if (heroGlass) {
-      gsap.set(heroGlass, { xPercent: -50, yPercent: -50 });
-      gsap.fromTo(
-        heroGlass,
-        { opacity: 0 },
-        { opacity: 1, duration: 1.6, ease: "power2.out", delay: 2.9 }
-      );
-      gsap.to(heroGlass, {
-        opacity: 0,
-        y: -60,
-        ease: "none",
-        immediateRender: false,
-        scrollTrigger: {
-          trigger: "#act-window",
-          start: "top 92%",
-          end: "top 46%",
-          scrub: true,
-        },
-      });
-    }
 
     /* ---------- dock targets ---------- */
     const dockScale = () => {
@@ -389,21 +365,6 @@ export default function BottleStage() {
           onLoad={() => ScrollTrigger.refresh()}
           className="bottle-fixed h-[56vh] max-h-[580px] min-h-[300px] w-auto select-none will-change-transform"
         />
-      </div>
-
-      {/* HERO NEON GLASS — pre-filled with wine, floats beside the bottle */}
-      <div
-        ref={heroGlassRef}
-        aria-hidden="true"
-        className="hero-glass pointer-events-none fixed left-[64%] top-[56%] z-30 hidden md:block"
-      >
-        <div className="hero-glass-float relative">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/glass-neon.webp" alt="" width={536} height={1546} draggable={false} className="glass-neon h-[22vh] max-h-[260px] min-h-[140px] w-auto select-none" />
-          <div className="absolute left-1/2 top-[11%] h-[40%] w-[37%] -translate-x-1/2 overflow-hidden rounded-b-[46%]">
-            <div className="wine-liquid absolute bottom-0 left-0 h-[55%] w-full" />
-          </div>
-        </div>
       </div>
 
       {/* THE POUR — wine stream + filling glass (scrubbed in Act 4) */}
