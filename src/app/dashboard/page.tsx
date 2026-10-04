@@ -197,6 +197,10 @@ export default async function Dashboard({
           <a href={`/dashboard/map?key=${key2}`} className="font-mono text-[11px] font-semibold tracking-[0.15em] text-amber hover:underline">
             MAP VIEW — saare leads pin-map pe
           </a>
+          <span className="mx-2 text-faint">·</span>
+          <a href={`/dashboard/customers?key=${key2}`} className="font-mono text-[11px] font-semibold tracking-[0.15em] text-amber hover:underline">
+            CUSTOMER MANAGER — subscribers + email test + $499 API keys
+          </a>
         </div>
 
         {/* first customer playbook */}
