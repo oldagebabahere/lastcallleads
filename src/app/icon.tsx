@@ -3,22 +3,23 @@ import { ImageResponse } from "next/og";
 export const size = { width: 64, height: 64 };
 export const contentType = "image/png";
 
-// Bold glass + last drop on an oxblood tile. Solid shapes only — crisp at 16px.
-function Glass({ s, drop = true }: { s: number; drop?: boolean }) {
+// Wine BOTTLE + cork on an oxblood tile. Solid shapes only — crisp at 16px.
+function Bottle({ s }: { s: number }) {
   return (
     <svg width={s} height={s} viewBox="0 0 48 48" fill="none">
-      {drop && (
-        <path
-          d="M24 1.6c1.4 1.9 2.2 3.3 2.2 4.4a2.2 2.2 0 1 1-4.4 0c0-1.1.8-2.5 2.2-4.4Z"
-          fill="#e8b054"
-        />
-      )}
-      <g transform={drop ? "translate(0 5.5)" : undefined}>
-        <path
-          d="M7.5 7h33v4c0 4.6-1.7 8.8-4.4 11.9-2.5 2.9-5.7 4.8-9.3 5.4V36h7.2v4.8h-20V36h7.2v-7.7c-3.6-.6-6.8-2.5-9.3-5.4C9.2 19.8 7.5 15.6 7.5 11V7Z"
-          fill="#e8b054"
-        />
-      </g>
+      {/* cork */}
+      <rect x="20.4" y="1.5" width="7.2" height="4.6" rx="1.4" fill="#f0c987" />
+      {/* neck + shoulders + body */}
+      <path
+        d="M21.4 6h5.2v9.3c0 1.2.5 2.3 1.3 3.1l1.5 1.5c1.6 1.6 2.5 3.8 2.5 6.1V40c0 2.4-2 4.4-4.4 4.4h-6.9c-2.4 0-4.4-2-4.4-4.4V26c0-2.3.9-4.5 2.5-6.1l1.5-1.5c.8-.8 1.2-1.9 1.2-3.1V6Z"
+        fill="#e8b054"
+      />
+      {/* label band (tile-colored so it reads as a cutout) */}
+      <rect x="15.1" y="27.5" width="17.8" height="10.5" rx="1.6" fill="#42161e" />
+      {/* label dot — the "last call" drop */}
+      <circle cx="24" cy="32.8" r="2.1" fill="#e8b054" />
+      {/* neck highlight */}
+      <rect x="22.6" y="8.4" width="1.5" height="5.6" rx="0.75" fill="#f0c987" />
     </svg>
   );
 }
@@ -37,7 +38,7 @@ export default function Icon() {
           borderRadius: 14,
         }}
       >
-        <Glass s={50} />
+        <Bottle s={50} />
       </div>
     ),
     { ...size }

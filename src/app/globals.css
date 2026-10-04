@@ -150,10 +150,10 @@ body::before {
   background: radial-gradient(120% 90% at 50% 0%, #4a1220 0%, #42161e 45%, #2a0710 100%);
   color: var(--color-cream);
 }
-body:not(.loaded) {
+body.intro-lock {
   overflow: hidden;
 }
-body:not(.loaded) .hero-fade {
+body.intro-lock .hero-fade {
   animation-play-state: paused;
 }
 

@@ -7,7 +7,7 @@ import { PUBLIC_CONFIG } from "@/lib/public-config";
 export const metadata: Metadata = {
   title: "Contact sales, support, data corrections & press",
   description:
-    "Contact Last Call Leads about sales, billing, technical support, public-record corrections, partnerships, or press requests.",
+    "Contact Last Call Leads about sales, billing, technical support, public-record corrections, or press requests.",
 };
 
 export default function ContactPage() {
@@ -20,7 +20,7 @@ export default function ContactPage() {
           Talk to <span className="italic text-amber">Last Call Leads.</span>
         </h1>
         <p className="mt-4 max-w-2xl text-sm leading-relaxed text-smoke">
-          Sales questions, billing help, data corrections, partnerships and press are all welcome.
+          Sales questions, billing help, data corrections and press are all welcome.
           Messages are stored securely so they are not lost if email delivery has a temporary issue.
         </p>
 

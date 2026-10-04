@@ -203,11 +203,32 @@ export default async function Dashboard({
           </a>
         </div>
 
+        {/* ---- page map — numbered guide ---- */}
+        <div className="mt-6 rounded-2xl border border-amber/30 bg-amber/5 p-5">
+          <p className="font-mono text-sm font-bold tracking-[0.12em] text-amber">
+            IS PAGE KA NAKSHA — 9 hisse, upar se niche
+          </p>
+          <ol className="mt-3 space-y-1.5 text-sm leading-relaxed text-cream/80">
+            <li><b className="text-cream">1 · GOLDMINE</b> — Texas ke sabse bade venues (revenue ke hisaab se) — sabse pehle inhe call karo</li>
+            <li><b className="text-cream">2 · SYSTEM STATUS</b> — owner manual: green = set hai, amber = Vercel env me daalo aur redeploy</li>
+            <li><b className="text-cream">3 · SOURCE HEALTH</b> — 26 data sources ki sehat (machine khud heal karti hai)</li>
+            <li><b className="text-cream">4 · MANUAL OVERRIDE</b> — RUN buttons: koi kaam abhi turant chalana ho (test/showoff)</li>
+            <li><b className="text-cream">5 · LEAD LAB</b> — Texas ke last 7 din ke naye filings, ready CSV (outreach ke liye)</li>
+            <li><b className="text-cream">6 · SUBSCRIBERS</b> — money table: kaun customer, kaunsa plan, kaunse states</li>
+            <li><b className="text-cream">7 · CONTACT INBOX</b> — website ke contact form ke messages (Gmail se reply karna)</li>
+            <li><b className="text-cream">8 · LAST EMAILS</b> — machine ne kisko kya bheja + error ka reason</li>
+            <li><b className="text-cream">9 · RECENT SWEEPS</b> — roz ke data-pull ka history</li>
+          </ol>
+          <p className="mt-3 text-sm text-cream/60">
+            Tools upar links me hain: PROSPECT FINDER (customers ke liye leads), MAP VIEW, CUSTOMER MANAGER.
+          </p>
+        </div>
+
         {/* first customer playbook */}
         <section className="mt-8">
           {/* ================= GOLDMINE — top venues by alcohol revenue ================= */}
         <section className="mt-10 border-t border-line pt-8">
-          <SectionTitle>Goldmine — biggest fish first</SectionTitle>
+          <SectionTitle>1 · Goldmine — biggest fish first</SectionTitle>
           <p className="mb-4 max-w-2xl text-sm leading-relaxed text-cream/70">
             Texas Comptroller publishes every venue&apos;s monthly alcohol receipts.
             These are the accounts worth a phone call before anyone else — sorted
@@ -251,7 +272,7 @@ export default async function Dashboard({
 
         {/* ================= SYSTEM STATUS (owner manual, moved from /setup) ================= */}
         <section className="mt-10 border-t border-line pt-8">
-          <SectionTitle>System status — the owner manual</SectionTitle>
+          <SectionTitle>2 · System status — the owner manual</SectionTitle>
           <p className="mb-4 max-w-2xl text-sm leading-relaxed text-cream/70">
             Everything the machine needs is below. Green = done. Amber = add it in your
             hosting provider&apos;s Environment Variables, then redeploy. No code, ever.
@@ -296,7 +317,8 @@ export default async function Dashboard({
 
         {/* source health */}
         <section className="mt-10">
-          <SectionTitle>Source health</SectionTitle>
+          <SectionTitle>3 · Source health</SectionTitle>
+          <p className="mb-4 max-w-2xl text-sm leading-relaxed text-cream/70">26 data sources — green = chal rahi. Koi source mara to machine khud replacement dhoondh leti hai.</p>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {Object.entries(SOURCE_LABELS).map(([id, label]) => {
               const last = lastBySource.get(id);
@@ -324,14 +346,15 @@ export default async function Dashboard({
 
         {/* manual controls */}
         <section className="mt-10 rounded-xl border border-line bg-panel p-6">
-          <SectionTitle>Manual override (for testing / showing off)</SectionTitle>
+          <SectionTitle>4 · Manual override (for testing / showing off)</SectionTitle>
+          <p className="mb-4 max-w-2xl text-sm leading-relaxed text-cream/70">RUN dabao = wo kaam turant chalega. Waise machine sab roz 12:00 UTC pe khud karti hai.</p>
           <RunButtons adminKey={key2} />
         </section>
 
         {/* lead lab — the machine's auto-generated outreach list */}
         <section className="mt-10">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <SectionTitle>Lead lab · auto-generated · last 7 days (TX)</SectionTitle>
+            <SectionTitle>5 · Lead lab · auto-generated · last 7 days (TX)</SectionTitle>
             <a
               href={`/api/admin/leadsheet?key=${key2}&state=TX&days=7&format=csv`}
               className="-mt-4 mb-4 rounded-md border border-amber/50 bg-amber/10 px-3 py-1.5 font-mono text-xs tracking-[0.15em] text-amber transition-transform hover:scale-[1.03]"
@@ -390,33 +413,34 @@ export default async function Dashboard({
 
         {/* subscribers — the money table */}
         <section className="mt-10">
-          <SectionTitle>Subscribers (money table)</SectionTitle>
+          <SectionTitle>6 · Subscribers (money table)</SectionTitle>
+          <p className="mb-4 max-w-2xl text-sm leading-relaxed text-cream/70">Tumhare customers — email, plan, states, status. Naya customer yahan dikhega.</p>
           <div className="mb-4 grid gap-3 sm:grid-cols-3">
             <div className="rounded-xl border border-line bg-panel p-5">
-              <p className="font-mono text-xs tracking-[0.22em] text-smoke">TOTAL REFERRED IN</p>
+              <p className="font-mono text-xs tracking-[0.22em] text-smoke">ACTIVE CUSTOMERS</p>
               <p className="font-display mt-2 text-3xl font-semibold text-cream">
-                {subRows.filter((s) => s.refBy).length}
+                {subRows.filter((s) => s.status === "active").length}
               </p>
               <p className="mt-1 font-mono text-xs text-cream/70">
-                Referral chain working
+                Abhi paise de rahe hain
               </p>
             </div>
             <div className="rounded-xl border border-line bg-panel p-5">
-              <p className="font-mono text-xs tracking-[0.22em] text-smoke">EST. MONTHLY COMMISSION OWED</p>
+              <p className="font-mono text-xs tracking-[0.22em] text-smoke">MONTHLY RECURRING (MRR)</p>
               <p className="font-display mt-2 text-3xl font-semibold text-amber">
-                ${subRows.filter((s) => s.refBy).length * 52}
+                ${subRows.filter((s) => s.status === "active").reduce((n, s) => n + (s.plan === "pro" ? 249 : s.plan === "enterprise" ? 499 : 129), 0)}
               </p>
               <p className="mt-1 font-mono text-xs text-cream/70">
-                40% of $129 per referred customer
+                Dodo har mahine khud collect karta hai
               </p>
             </div>
             <div className="rounded-xl border border-line bg-panel p-5">
-              <p className="font-mono text-xs tracking-[0.22em] text-smoke">PARTNER LINK</p>
-              <p className="mt-2 break-all font-mono text-sm text-amber">
-                /snapshot?ref=YOU@EMAIL.COM
+              <p className="font-mono text-xs tracking-[0.22em] text-smoke">REFERRAL — FREE MONTH</p>
+              <p className="mt-2 font-mono text-sm text-cream/70">
+                1 paying referral = 1 month FREE
               </p>
-              <a href="/partner" className="mt-2 inline-block font-mono text-xs tracking-[0.15em] text-amber hover:underline">
-                PARTNER PAGE →
+              <a href="/refer" className="mt-2 inline-block font-mono text-xs tracking-[0.15em] text-amber hover:underline">
+                APNA REFERRAL LINK BANAO →
               </a>
             </div>
           </div>
@@ -469,7 +493,8 @@ export default async function Dashboard({
 
         {/* contact inbox */}
         <section className="mt-10">
-          <SectionTitle>Website contact inbox</SectionTitle>
+          <SectionTitle>7 · Website contact inbox</SectionTitle>
+          <p className="mb-4 max-w-2xl text-sm leading-relaxed text-cream/70">Contact form se aaye messages — inhi ko Gmail se reply karna hai (tumhara asli kaam).</p>
           <div className="space-y-3">
             {messageRows.length === 0 && (
               <p className="rounded-xl border border-line px-6 py-8 font-mono text-xs text-cream/70">
@@ -498,7 +523,8 @@ export default async function Dashboard({
 
         {/* emails */}
         <section className="mt-10">
-          <SectionTitle>Last emails</SectionTitle>
+          <SectionTitle>8 · Last emails</SectionTitle>
+          <p className="mb-4 max-w-2xl text-sm leading-relaxed text-cream/70">Machine ke bheje emails ka record. Error dikhe to reason saath me likha hoga.</p>
           <div className="overflow-hidden rounded-xl border border-line">
             {mailRows.length === 0 && (
               <p className="px-6 py-8 font-mono text-xs text-cream/70">
@@ -526,7 +552,8 @@ export default async function Dashboard({
 
         {/* recent runs */}
         <section className="mt-10">
-          <SectionTitle>Recent sweeps</SectionTitle>
+          <SectionTitle>9 · Recent sweeps</SectionTitle>
+          <p className="mb-4 max-w-2xl text-sm leading-relaxed text-cream/70">Roz ke data-pull ka history — sab green hona chahiye.</p>
           <div className="overflow-hidden rounded-xl border border-line">
             {runRows.slice(0, 15).map((r) => (
               <div key={r.id} className="grid grid-cols-[1fr_auto] gap-2 border-b border-line/70 px-4 py-3 last:border-0 sm:grid-cols-[180px_1fr_auto_auto]">

@@ -76,7 +76,7 @@ export function AddCustomer({ k }: { k: string }) {
   return (
     <div className="rounded-2xl border border-cream/15 bg-panel p-6">
       <p className="font-mono text-sm font-semibold tracking-[0.12em] text-cream/70">
-        ADD / ACTIVATE CUSTOMER (manual payment, Dodo link, ya kisi ki fix)
+        2 · ADD / ACTIVATE CUSTOMER — payment Dodo link/manual hua ho to yahan active karo
       </p>
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <input className={input} placeholder="customer@email.com" value={email} onChange={(e) => setEmail(e.target.value)} />
@@ -150,7 +150,7 @@ export function GenKey() {
   return (
     <div className="rounded-2xl border border-cream/15 bg-panel p-6">
       <p className="font-mono text-sm font-semibold tracking-[0.12em] text-cream/70">
-        $499 ENTERPRISE API KEY — customer ko dene wali chaabi
+        4 · $499 ENTERPRISE API KEY — customer ko dene wali chaabi
       </p>
       <button
         className={`${btn} mt-4`}

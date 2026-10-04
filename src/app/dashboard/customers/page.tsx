@@ -54,6 +54,7 @@ export default async function CustomersPage({
   const ops = process.env.OPS_EMAIL ?? null;
   const resendOk = Boolean(process.env.RESEND_API_KEY);
   const sharedFrom = Boolean(from && from.includes("resend.dev"));
+  const postalOk = Boolean(process.env.NEXT_PUBLIC_BUSINESS_POSTAL_ADDRESS?.trim());
   const fmt = (d: Date | null) =>
     d ? new Date(d).toISOString().slice(0, 16).replace("T", " ") : "—";
 
@@ -86,7 +87,7 @@ export default async function CustomersPage({
         {/* ---- email machine panel ---- */}
         <section className="mt-8 rounded-2xl border border-cream/15 bg-panel p-6">
           <p className="font-mono text-sm font-semibold tracking-[0.12em] text-amber">
-            EMAIL MACHINE — kyun email nahi aa raha, yahin pata chalega
+            1 · EMAIL MACHINE — kyun email nahi aa raha, yahin pata chalega
           </p>
           <div className="mt-4 flex flex-wrap gap-x-6 gap-y-2 text-sm">
             <span className={resendOk ? "font-semibold text-green-300" : "font-semibold text-red-300"}>
@@ -99,6 +100,15 @@ export default async function CustomersPage({
               OPS email: <span className="font-semibold text-cream">{ops ?? "— set nahi —"}</span>
             </span>
           </div>
+          {!postalOk && (
+            <p className="mt-4 rounded-xl border border-red-400/50 bg-red-400/10 p-4 text-sm font-semibold leading-relaxed text-red-300">
+              🚨 POSTAL ADDRESS MISSING — isliye roz ke digest emails FAIL ho rahe
+              hain (log me &quot;NEXT_PUBLIC_BUSINESS_POSTAL_ADDRESS is required&quot;).
+              Fix: Vercel → Environment Variables →{" "}
+              <b>NEXT_PUBLIC_BUSINESS_POSTAL_ADDRESS</b> = tumhara address →
+              Redeploy. Bas.
+            </p>
+          )}
           {sharedFrom && (
             <p className="mt-4 rounded-xl border border-amber/40 bg-amber/10 p-4 text-sm leading-relaxed text-amber">
               ⚠ From-email abhi <b>resend.dev</b> pe hai — ye SIRF tumhare Resend
@@ -157,7 +167,7 @@ export default async function CustomersPage({
         {/* ---- subscribers table ---- */}
         <section className="mt-6 overflow-x-auto rounded-2xl border border-cream/15 bg-panel p-6">
           <p className="font-mono text-sm font-semibold tracking-[0.12em] text-cream/70">
-            SUBSCRIBERS ({subs.length}) — pause = digest band, active = wapas on
+            3 · SUBSCRIBERS ({subs.length}) — ek click me pause / wapas active
           </p>
           <table className="mt-4 w-full min-w-[820px] text-left text-sm">
             <thead>

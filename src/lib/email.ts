@@ -406,6 +406,7 @@ export async function sendWelcome(input: {
             <p style="color:#aaa;line-height:1.7">Your ${esc(input.plan)} plan is active for <strong style="color:#fff">${esc(input.states)}</strong>. When new matching filings appear, the next digest will arrive after the scheduled registry sweep.</p>
             <p style="color:#aaa;line-height:1.7">Want only certain ZIP codes, or only full bars? Set that up here:</p>
             <p style="line-height:1.7"><a style="color:#e9a13b" href="${prefsUrl(input.email)}">Change ZIP codes &amp; lead types →</a></p>
+            <p style="margin-top:20px;padding:12px 14px;border:1px solid #3a2c1f;border-radius:8px;color:#c9bfae;font-size:12px;line-height:1.7"><strong style="color:#e9a13b">Gmail tip:</strong> if this email lands in your Updates tab, drag it to Primary and pick "Always do this" — the morning digest will then be the first thing you see each day.</p>
             <p style="color:#aaa;line-height:1.7">Questions? Reply to this email or contact <a style="color:#e9a13b" href="mailto:${esc(PUBLIC_CONFIG.contactEmail)}">${esc(PUBLIC_CONFIG.contactEmail)}</a>.</p>
             <p style="margin-top:28px;color:#777;font-size:11px;line-height:1.7">
               <a style="color:#e9a13b" href="${unsubscribe.page}">Stop alert emails</a><br />

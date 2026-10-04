@@ -60,7 +60,9 @@ export default function BottleStage() {
     if (reduce || !pre) {
       pre?.remove();
       document.body.classList.add("loaded");
+      document.body.classList.remove("intro-lock");
     } else {
+      document.body.classList.add("intro-lock");
       document.body.classList.remove("loaded");
       const tl = gsap.timeline({ delay: 0.15 });
       tl.to(counterRef.current, {
@@ -69,7 +71,10 @@ export default function BottleStage() {
         snap: { textContent: 1 },
         ease: "power2.inOut",
       })
-        .add(() => document.body.classList.add("loaded"))
+        .add(() => {
+          document.body.classList.add("loaded");
+          document.body.classList.remove("intro-lock");
+        })
         .to(pre, { yPercent: -100, duration: 0.85, ease: "expo.inOut" }, "+=0.12")
         .add(() => {
           pre.remove();
