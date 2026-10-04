@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { Playfair_Display, EB_Garamond, Inter_Tight, JetBrains_Mono } from "next/font/google";
 import { BRAND } from "@/lib/brand";
 import ScrollProgress from "@/components/scroll-progress";
+import { Analytics } from "@vercel/analytics/react";
 import "./globals.css";
 
 // Editorial mix: a light modern grotesque for headlines (the "premium animated
@@ -89,6 +90,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           }}
         />
         <ScrollProgress />
+        <Analytics />
         {children}
       </body>
     </html>

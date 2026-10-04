@@ -7,6 +7,7 @@ import { cronAuthorized } from "@/lib/auth";
 import { runMaintenance } from "@/lib/maintenance";
 import { runBriefings, runMonthlyRecaps } from "@/lib/digest";
 import { harvestProspects } from "@/lib/prospects";
+import { runDbBackup } from "@/lib/owner-tasks";
 import { sendOpsAlert } from "@/lib/pourwatch";
 import { db } from "@/db";
 import { prospects, venueReceipts } from "@/db/schema";
@@ -94,6 +95,12 @@ export async function GET(req: Request) {
     opsRecap = "error";
   }
 
+  // Weekly DB backup — customer list + messages as CSV attachments to owner
+  const backup = await runDbBackup().catch((e) => ({
+    sent: false,
+    detail: String(e).slice(0, 120),
+  }));
+
   return Response.json({
     ok: true,
     ranAt: new Date().toISOString(),
@@ -102,5 +109,6 @@ export async function GET(req: Request) {
     ...(recaps ? { recaps } : {}),
     prospects: harvestReport,
     opsRecap,
+    backup,
   });
 }

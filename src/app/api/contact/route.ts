@@ -2,6 +2,7 @@ import { db } from "@/db";
 import { ensureSchema } from "@/db/bootstrap";
 import { contactMessages } from "@/db/schema";
 import { PUBLIC_CONFIG } from "@/lib/public-config";
+import { clientIp, rateLimit, tooManyRequests } from "@/lib/rate-limit";
 import { Resend } from "resend";
 
 export const dynamic = "force-dynamic";
@@ -9,6 +10,10 @@ export const dynamic = "force-dynamic";
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export async function POST(req: Request) {
+  // public form — cap spam from a single IP
+  if (!rateLimit({ key: `contact:${clientIp(req)}`, max: 5, windowMs: 60_000 })) {
+    return tooManyRequests();
+  }
   let body: {
     name?: string;
     email?: string;

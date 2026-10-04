@@ -30,9 +30,21 @@ export async function generateMetadata({
       .limit(1);
     const e = rows[0];
     if (!e) return { title: "Filing not found" };
+    // Embargo applies to metadata too — the full name is member-only until
+    // the public cutoff passes. (Title/description leak = embargo bypass.)
+    const cut = embargoCutoff();
+    const locked = e.occurredAt ? e.occurredAt.getTime() > cut.getTime() : false;
+    const verb = e.eventType === "NEW_PENDING" ? "application filed" : "license issued";
+    if (locked) {
+      return {
+        title: `New liquor-license ${verb} in ${e.city ?? e.state}`,
+        description:
+          "A new venue just filed with the state. The name unlocks for the public after the embargo — members see it the same morning it posts.",
+      };
+    }
     const name = e.tradeName ?? e.ownerName ?? "New applicant";
     return {
-      title: `${name} — ${e.eventType === "NEW_PENDING" ? "application filed" : "license issued"} in ${e.city ?? e.state}`,
+      title: `${name} — ${verb} in ${e.city ?? e.state}`,
       description: e.summary,
     };
   } catch {

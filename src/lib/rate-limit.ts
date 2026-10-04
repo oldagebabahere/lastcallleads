@@ -9,9 +9,18 @@ type Bucket = { hits: number[] };
 const buckets = new Map<string, Bucket>();
 
 export function clientIp(req: Request): string {
+  // Prefer x-real-ip (set by the platform to the actual connecting client).
+  // For x-forwarded-for take the LAST entry — platforms append the real IP,
+  // so the first entries can be attacker-supplied. Trusting the first entry
+  // would let anyone rotate a fake XFF header to dodge rate limits.
+  const real = req.headers.get("x-real-ip");
+  if (real) return real.trim();
   const fwd = req.headers.get("x-forwarded-for");
-  if (fwd) return fwd.split(",")[0].trim();
-  return req.headers.get("x-real-ip") ?? "unknown";
+  if (fwd) {
+    const parts = fwd.split(",").map((s) => s.trim()).filter(Boolean);
+    if (parts.length) return parts[parts.length - 1];
+  }
+  return "unknown";
 }
 
 /** Returns true when the request is allowed; false = over the limit (429). */

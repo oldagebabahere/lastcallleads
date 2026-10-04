@@ -7,6 +7,7 @@ import { sweepStale } from "@/lib/pourwatch";
 import { runDigest } from "@/lib/digest";
 import { runReceiptsIngest } from "@/lib/ingest-receipts";
 import { harvestProspects, PROSPECT_CATEGORIES } from "@/lib/prospects";
+import { buildSocialPost, runTrialTips } from "@/lib/owner-tasks";
 import { db } from "@/db";
 import { prospects } from "@/db/schema";
 import { eq, sql } from "drizzle-orm";
@@ -123,6 +124,20 @@ export async function GET(req: Request) {
     error: String(e),
   }));
 
+  // 4) trial tips (day 1/3/5 retention emails) + social post draft (Mon/Wed/Fri)
+  const trialTips = await runTrialTips().catch((e) => ({
+    sent: 0,
+    skipped: 0,
+    error: String(e),
+  }));
+  let socialPost: { sent: boolean; detail: string } | null = null;
+  if (dow === 1 || dow === 3 || dow === 5) {
+    socialPost = await buildSocialPost().catch((e) => ({
+      sent: false,
+      detail: String(e).slice(0, 120),
+    }));
+  }
+
   return Response.json({
     ok: true,
     ranAt: new Date().toISOString(),
@@ -139,5 +154,7 @@ export async function GET(req: Request) {
     },
     ...(bootstrapped ? { bootstrapped } : {}),
     digest: { ok: digest.ok, sent: digest.sent ?? 0 },
+    trialTips,
+    ...(socialPost ? { socialPost } : {}),
   });
 }
