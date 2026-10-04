@@ -112,14 +112,14 @@ export default function ProspectMap({ pins }: { pins: MapPin[] }) {
       {/* legend */}
       <div className="flex flex-wrap gap-3">
         {Object.entries(LABELS).map(([id, label]) => (
-          <span key={id} className="flex items-center gap-1.5 font-mono text-[10px] tracking-[0.12em] text-smoke">
+          <span key={id} className="flex items-center gap-1.5 font-mono text-xs tracking-[0.12em] text-cream/70">
             <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: COLORS[id] }} />
             {label.toUpperCase()}
           </span>
         ))}
       </div>
       {failed ? (
-        <div className="mt-4 rounded-xl border border-line bg-panel p-6 font-mono text-xs text-smoke">
+        <div className="mt-4 rounded-xl border border-line bg-panel p-6 font-mono text-xs text-cream/70">
           Map tiles is network pe load nahi hue — list neeche phir bhi kaam karta hai.
         </div>
       ) : (

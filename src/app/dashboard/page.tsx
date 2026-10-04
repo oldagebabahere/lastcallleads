@@ -36,7 +36,7 @@ export default async function Dashboard({
     return (
       <Shell>
         <h1 className="font-display text-3xl font-medium">One tiny step first.</h1>
-        <p className="mt-4 max-w-lg text-sm leading-relaxed text-smoke">
+        <p className="mt-4 max-w-lg text-sm leading-relaxed text-cream/70">
           Your control room is locked until you set an <Code>ADMIN_KEY</Code> password in
           your hosting provider&apos;s Environment Variables.
           Pick a strong unique value, save, redeploy, then come back here as:
@@ -52,7 +52,7 @@ export default async function Dashboard({
     return (
       <Shell>
         <h1 className="font-display text-3xl font-medium">Control room</h1>
-        <p className="mt-4 max-w-lg text-sm leading-relaxed text-smoke">
+        <p className="mt-4 max-w-lg text-sm leading-relaxed text-cream/70">
           Enter your admin password. Bookmark the next page — that link is your
           permanent control room.
         </p>
@@ -62,9 +62,9 @@ export default async function Dashboard({
             type="password"
             autoFocus
             placeholder="Your ADMIN_KEY"
-            className="min-w-0 flex-1 rounded-md border border-line bg-panel px-3.5 py-2.5 text-sm text-cream placeholder:text-faint focus:border-amber/60 focus:outline-none"
+            className="min-w-0 flex-1 rounded-md border border-line bg-panel px-3.5 py-2.5 text-sm text-cream placeholder:text-smoke focus:border-amber/60 focus:outline-none"
           />
-          <button className="rounded-md bg-amber px-4 py-2.5 font-mono text-[11px] font-semibold tracking-[0.12em] text-ink">
+          <button className="rounded-md bg-amber px-4 py-2.5 font-mono text-sm font-semibold tracking-[0.12em] text-ink">
             OPEN
           </button>
         </form>
@@ -157,7 +157,7 @@ export default async function Dashboard({
               Control <span className="text-amber">room</span>
             </h1>
           </div>
-          <div className="flex items-center gap-2 font-mono text-[10px] tracking-[0.15em]">
+          <div className="flex items-center gap-2 font-mono text-xs tracking-[0.15em]">
             <StatusDot ok={ready} label={ready ? "DATABASE OK" : "DATABASE PROBLEM"} />
             <StatusDot ok={resendSet} label={resendSet ? "EMAIL LIVE" : "EMAIL DRY-RUN"} />
             <StatusDot ok={dodoConfigured()} label={dodoConfigured() ? "BILLING LIVE" : "BILLING OFF"} />
@@ -190,15 +190,15 @@ export default async function Dashboard({
 
         {/* prospect finder link */}
         <div className="mt-4 rounded-xl border border-amber/30 bg-amber/5 p-4">
-          <a href={`/dashboard/prospects?key=${key2}`} className="font-mono text-[11px] font-semibold tracking-[0.15em] text-amber hover:underline">
+          <a href={`/dashboard/prospects?key=${key2}`} className="font-mono text-sm font-semibold tracking-[0.15em] text-amber hover:underline">
             → PROSPECT FINDER — tumhare customers ka unlimited daily list (attorneys / insurance / beverage) — CSV
           </a>
-          <span className="mx-2 text-faint">·</span>
-          <a href={`/dashboard/map?key=${key2}`} className="font-mono text-[11px] font-semibold tracking-[0.15em] text-amber hover:underline">
+          <span className="mx-2 text-smoke">·</span>
+          <a href={`/dashboard/map?key=${key2}`} className="font-mono text-sm font-semibold tracking-[0.15em] text-amber hover:underline">
             MAP VIEW — saare leads pin-map pe
           </a>
-          <span className="mx-2 text-faint">·</span>
-          <a href={`/dashboard/customers?key=${key2}`} className="font-mono text-[11px] font-semibold tracking-[0.15em] text-amber hover:underline">
+          <span className="mx-2 text-smoke">·</span>
+          <a href={`/dashboard/customers?key=${key2}`} className="font-mono text-sm font-semibold tracking-[0.15em] text-amber hover:underline">
             CUSTOMER MANAGER — subscribers + email test + $499 API keys
           </a>
         </div>
@@ -208,20 +208,20 @@ export default async function Dashboard({
           {/* ================= GOLDMINE — top venues by alcohol revenue ================= */}
         <section className="mt-10 border-t border-line pt-8">
           <SectionTitle>Goldmine — biggest fish first</SectionTitle>
-          <p className="mb-4 max-w-2xl text-sm leading-relaxed text-smoke">
+          <p className="mb-4 max-w-2xl text-sm leading-relaxed text-cream/70">
             Texas Comptroller publishes every venue&apos;s monthly alcohol receipts.
             These are the accounts worth a phone call before anyone else — sorted
             by revenue, refreshed daily.
           </p>
           {goldmine.length === 0 ? (
-            <p className="rounded-xl border border-line px-6 py-8 font-mono text-xs text-smoke">
+            <p className="rounded-xl border border-line px-6 py-8 font-mono text-xs text-cream/70">
               No receipts data yet — it loads on the next daily sweep (or press RUN above).
             </p>
           ) : (
             <div className="overflow-hidden rounded-xl border border-line">
               <table className="w-full text-left text-sm">
                 <thead>
-                  <tr className="border-b border-line bg-panel font-mono text-[9px] tracking-[0.18em] text-faint">
+                  <tr className="border-b border-line bg-panel font-mono text-[9px] tracking-[0.18em] text-smoke">
                     <th className="px-4 py-3">VENUE</th>
                     <th className="px-4 py-3">CITY</th>
                     <th className="px-4 py-3 text-right">ALCOHOL / MO</th>
@@ -232,11 +232,11 @@ export default async function Dashboard({
                   {goldmine.map((v) => (
                     <tr key={v.permit} className="border-b border-line/60 last:border-0">
                       <td className="px-4 py-2.5 text-cream">{v.name ?? "—"}</td>
-                      <td className="px-4 py-2.5 text-smoke">{v.city ?? "—"}</td>
+                      <td className="px-4 py-2.5 text-cream/70">{v.city ?? "—"}</td>
                       <td className="px-4 py-2.5 text-right font-mono text-amber">
                         ${Math.round(v.total).toLocaleString()}
                       </td>
-                      <td className="hidden px-4 py-2.5 text-right font-mono text-[11px] text-faint sm:table-cell">
+                      <td className="hidden px-4 py-2.5 text-right font-mono text-sm text-smoke sm:table-cell">
                         {[v.liquor, v.wine, v.beer]
                           .map((x) => (x ? `$${Math.round(x / 1000)}k` : "—"))
                           .join(" / ")}
@@ -252,7 +252,7 @@ export default async function Dashboard({
         {/* ================= SYSTEM STATUS (owner manual, moved from /setup) ================= */}
         <section className="mt-10 border-t border-line pt-8">
           <SectionTitle>System status — the owner manual</SectionTitle>
-          <p className="mb-4 max-w-2xl text-sm leading-relaxed text-smoke">
+          <p className="mb-4 max-w-2xl text-sm leading-relaxed text-cream/70">
             Everything the machine needs is below. Green = done. Amber = add it in your
             hosting provider&apos;s Environment Variables, then redeploy. No code, ever.
           </p>
@@ -285,7 +285,7 @@ export default async function Dashboard({
                     {c.ok ? "DONE" : "NEEDED"}
                   </span>
                 </div>
-                <p className="mt-1 font-mono text-[10px] leading-relaxed text-smoke">{c.hint}</p>
+                <p className="mt-1 font-mono text-xs leading-relaxed text-cream/70">{c.hint}</p>
               </div>
             ))}
           </div>
@@ -308,13 +308,13 @@ export default async function Dashboard({
                     <p className="text-sm font-medium text-cream">{label}</p>
                     <StatusDot ok={healthy} small label={last ? (last.ok ? "OK" : "FAIL") : "NEW"} />
                   </div>
-                  <p className="mt-3 font-mono text-[11px] leading-relaxed text-smoke">
+                  <p className="mt-3 font-mono text-sm leading-relaxed text-cream/70">
                     {last
                       ? `Last: ${fmtDate(last.startedAt)} · ${last.rowsSeen.toLocaleString()} rows · +${last.newEvents} filings`
                       : "Never pulled — runs tomorrow at 12:00 UTC, or use the buttons below."}
                   </p>
                   {last?.error && (
-                    <p className="mt-2 line-clamp-3 font-mono text-[10px] leading-relaxed text-blood">{last.error}</p>
+                    <p className="mt-2 line-clamp-3 font-mono text-xs leading-relaxed text-blood">{last.error}</p>
                   )}
                 </div>
               );
@@ -334,23 +334,23 @@ export default async function Dashboard({
             <SectionTitle>Lead lab · auto-generated · last 7 days (TX)</SectionTitle>
             <a
               href={`/api/admin/leadsheet?key=${key2}&state=TX&days=7&format=csv`}
-              className="-mt-4 mb-4 rounded-md border border-amber/50 bg-amber/10 px-3 py-1.5 font-mono text-[10px] tracking-[0.15em] text-amber transition-transform hover:scale-[1.03]"
+              className="-mt-4 mb-4 rounded-md border border-amber/50 bg-amber/10 px-3 py-1.5 font-mono text-xs tracking-[0.15em] text-amber transition-transform hover:scale-[1.03]"
             >
               DOWNLOAD CSV ↓
             </a>
           </div>
-          <p className="-mt-2 mb-4 font-mono text-[10px] leading-relaxed tracking-[0.08em] text-faint">
+          <p className="-mt-2 mb-4 font-mono text-xs leading-relaxed tracking-[0.08em] text-smoke">
             THE MACHINE&apos;S JOB: whenever new filings land in a county, the licensed
             wholesalers/distributors there show up here automatically. YOUR JOB: email/call them.
           </p>
           {!leadSheet ? (
-            <p className="rounded-xl border border-line px-6 py-8 font-mono text-xs text-smoke">
+            <p className="rounded-xl border border-line px-6 py-8 font-mono text-xs text-cream/70">
               No lead sheet yet — pull the sources first, then this fills in.
             </p>
           ) : (
             <div className="overflow-hidden rounded-xl border border-line">
               {leadSheet.counties.length === 0 && (
-                <p className="px-6 py-8 font-mono text-xs leading-relaxed text-smoke">
+                <p className="px-6 py-8 font-mono text-xs leading-relaxed text-cream/70">
                   No new pending filings in the last 7 days. Once data is pulled this
                   list refills itself. (Runs every sweep — zero manual work.)
                 </p>
@@ -360,15 +360,15 @@ export default async function Dashboard({
                   <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 transition-colors hover:bg-panel">
                     <span className="flex items-baseline gap-3">
                       <span className="text-base font-medium text-cream">{c.county} County</span>
-                      <span className="font-mono text-[11px] text-amber">
+                      <span className="font-mono text-sm text-amber">
                         {c.filings} NEW FILINGS
                       </span>
                     </span>
-                    <span className="font-mono text-[10px] text-faint group-open:rotate-45">+</span>
+                    <span className="font-mono text-xs text-smoke group-open:rotate-45">+</span>
                   </summary>
                   <div className="grid gap-2 bg-panel2/60 px-4 py-4 sm:grid-cols-2">
                     {c.distributors.length === 0 && (
-                      <p className="font-mono text-xs text-smoke">
+                      <p className="font-mono text-xs text-cream/70">
                         Is county mein trackable distributor nahi mila — asli leads ke liye
                         county badlo ya CSV check karo.
                       </p>
@@ -376,7 +376,7 @@ export default async function Dashboard({
                     {c.distributors.map((name, i) => (
                       <div key={i} className="flex items-center justify-between gap-3 rounded-md border border-line bg-ink px-3 py-2">
                         <span className="truncate text-sm text-cream">{name}</span>
-                        <span className="shrink-0 font-mono text-[10px] text-smoke">
+                        <span className="shrink-0 font-mono text-xs text-cream/70">
                           {c.phones[i] ?? "no phone"}
                         </span>
                       </div>
@@ -393,48 +393,48 @@ export default async function Dashboard({
           <SectionTitle>Subscribers (money table)</SectionTitle>
           <div className="mb-4 grid gap-3 sm:grid-cols-3">
             <div className="rounded-xl border border-line bg-panel p-5">
-              <p className="font-mono text-[10px] tracking-[0.22em] text-faint">TOTAL REFERRED IN</p>
+              <p className="font-mono text-xs tracking-[0.22em] text-smoke">TOTAL REFERRED IN</p>
               <p className="font-display mt-2 text-3xl font-semibold text-cream">
                 {subRows.filter((s) => s.refBy).length}
               </p>
-              <p className="mt-1 font-mono text-[10px] text-smoke">
+              <p className="mt-1 font-mono text-xs text-cream/70">
                 Referral chain working
               </p>
             </div>
             <div className="rounded-xl border border-line bg-panel p-5">
-              <p className="font-mono text-[10px] tracking-[0.22em] text-faint">EST. MONTHLY COMMISSION OWED</p>
+              <p className="font-mono text-xs tracking-[0.22em] text-smoke">EST. MONTHLY COMMISSION OWED</p>
               <p className="font-display mt-2 text-3xl font-semibold text-amber">
                 ${subRows.filter((s) => s.refBy).length * 52}
               </p>
-              <p className="mt-1 font-mono text-[10px] text-smoke">
+              <p className="mt-1 font-mono text-xs text-cream/70">
                 40% of $129 per referred customer
               </p>
             </div>
             <div className="rounded-xl border border-line bg-panel p-5">
-              <p className="font-mono text-[10px] tracking-[0.22em] text-faint">PARTNER LINK</p>
-              <p className="mt-2 break-all font-mono text-[11px] text-amber">
+              <p className="font-mono text-xs tracking-[0.22em] text-smoke">PARTNER LINK</p>
+              <p className="mt-2 break-all font-mono text-sm text-amber">
                 /snapshot?ref=YOU@EMAIL.COM
               </p>
-              <a href="/partner" className="mt-2 inline-block font-mono text-[10px] tracking-[0.15em] text-amber hover:underline">
+              <a href="/partner" className="mt-2 inline-block font-mono text-xs tracking-[0.15em] text-amber hover:underline">
                 PARTNER PAGE →
               </a>
             </div>
           </div>
           <AddClientForm adminKey={key2} />
-          <p className="-mt-2 mb-4 font-mono text-[10px] leading-relaxed tracking-[0.08em] text-faint">
+          <p className="-mt-2 mb-4 font-mono text-xs leading-relaxed tracking-[0.08em] text-smoke">
             EARLY DAYS PLAYBOOK: customer pays you via Razorpay link / UPI / invoice →
             ADD CLIENT (above) or press ACTIVATE → their daily alerts start tomorrow
             morning. Once your payment keys are added, this panel runs itself.
           </p>
           <div className="overflow-hidden rounded-xl border border-line">
             {subRows.length === 0 && (
-              <p className="px-6 py-8 font-mono text-xs text-smoke">
+              <p className="px-6 py-8 font-mono text-xs text-cream/70">
                 No signups yet — share the site, the waitlist fills here automatically.
               </p>
             )}
             <div className="hidden grid-cols-[1fr_100px_80px_110px_70px_auto] gap-3 border-b border-line bg-panel px-4 py-2.5 sm:grid">
               {["EMAIL", "STATES", "PLAN", "SINCE", "REFS", "ACTION"].map((h) => (
-                <span key={h} className="font-mono text-[9px] tracking-[0.25em] text-faint">{h}</span>
+                <span key={h} className="font-mono text-[9px] tracking-[0.25em] text-smoke">{h}</span>
               ))}
             </div>
             {subRows.map((s) => (
@@ -445,7 +445,7 @@ export default async function Dashboard({
                 <span className="min-w-0">
                   <span className="block truncate text-sm text-cream">{s.email}</span>
                   <span
-                    className={`mt-0.5 inline-block font-mono text-[10px] tracking-[0.15em] ${
+                    className={`mt-0.5 inline-block font-mono text-xs tracking-[0.15em] ${
                       s.status === "active" ? "text-leaf" : s.status === "waitlist" ? "text-amber" : "text-blood"
                     }`}
                   >
@@ -455,10 +455,10 @@ export default async function Dashboard({
                     <span className="ml-2 font-mono text-[9px] text-amber">REF: {s.refBy}</span>
                   )}
                 </span>
-                <span className="font-mono text-[11px] text-smoke">{s.states}</span>
-                <span className="font-mono text-[11px] text-smoke">{s.plan}</span>
-                <span className="font-mono text-[11px] text-faint">{fmtDate(s.createdAt)}</span>
-                <span className="font-mono text-[11px] text-smoke">
+                <span className="font-mono text-sm text-cream/70">{s.states}</span>
+                <span className="font-mono text-sm text-cream/70">{s.plan}</span>
+                <span className="font-mono text-sm text-smoke">{fmtDate(s.createdAt)}</span>
+                <span className="font-mono text-sm text-cream/70">
                   {subRows.filter((x) => x.refBy === s.email).length} REF
                 </span>
                 <SubscriberActions adminKey={key2} email={s.email} status={s.status} />
@@ -472,7 +472,7 @@ export default async function Dashboard({
           <SectionTitle>Website contact inbox</SectionTitle>
           <div className="space-y-3">
             {messageRows.length === 0 && (
-              <p className="rounded-xl border border-line px-6 py-8 font-mono text-xs text-smoke">
+              <p className="rounded-xl border border-line px-6 py-8 font-mono text-xs text-cream/70">
                 No contact messages yet.
               </p>
             )}
@@ -481,14 +481,14 @@ export default async function Dashboard({
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <p className="text-sm font-medium text-cream">{m.subject ?? "General question"}</p>
-                    <p className="mt-1 font-mono text-[10px] text-smoke">
+                    <p className="mt-1 font-mono text-xs text-cream/70">
                       {m.name} · {m.email}{m.company ? ` · ${m.company}` : ""}
                     </p>
                   </div>
-                  <span className="font-mono text-[10px] text-faint">{fmtDate(m.createdAt)}</span>
+                  <span className="font-mono text-xs text-smoke">{fmtDate(m.createdAt)}</span>
                 </div>
-                <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-smoke">{m.message}</p>
-                <a href={`mailto:${m.email}`} className="mt-4 inline-block font-mono text-[10px] tracking-[0.15em] text-amber hover:underline">
+                <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-cream/70">{m.message}</p>
+                <a href={`mailto:${m.email}`} className="mt-4 inline-block font-mono text-xs tracking-[0.15em] text-amber hover:underline">
                   REPLY BY EMAIL →
                 </a>
               </article>
@@ -501,19 +501,19 @@ export default async function Dashboard({
           <SectionTitle>Last emails</SectionTitle>
           <div className="overflow-hidden rounded-xl border border-line">
             {mailRows.length === 0 && (
-              <p className="px-6 py-8 font-mono text-xs text-smoke">
+              <p className="px-6 py-8 font-mono text-xs text-cream/70">
                 Nothing sent yet — emails flow the morning after the first active subscriber.
               </p>
             )}
             {mailRows.map((m) => (
               <div key={m.id} className="grid grid-cols-[110px_1fr_130px] items-center gap-3 border-b border-line/70 px-4 py-3 last:border-0">
-                <span className="font-mono text-[11px] text-faint">{fmtDate(m.createdAt)}</span>
+                <span className="font-mono text-sm text-smoke">{fmtDate(m.createdAt)}</span>
                 <span className="min-w-0">
                   <span className="block truncate text-sm text-cream">{m.subject}</span>
-                  <span className="block truncate font-mono text-[10px] text-faint">{m.toEmail}</span>
+                  <span className="block truncate font-mono text-xs text-smoke">{m.toEmail}</span>
                 </span>
                 <span
-                  className={`text-right font-mono text-[10px] tracking-[0.15em] ${
+                  className={`text-right font-mono text-xs tracking-[0.15em] ${
                     m.status === "sent" ? "text-leaf" : m.status === "dry_run" ? "text-amber" : "text-blood"
                   }`}
                 >
@@ -531,19 +531,19 @@ export default async function Dashboard({
             {runRows.slice(0, 15).map((r) => (
               <div key={r.id} className="grid grid-cols-[1fr_auto] gap-2 border-b border-line/70 px-4 py-3 last:border-0 sm:grid-cols-[180px_1fr_auto_auto]">
                 <span className="text-sm text-cream">{SOURCE_LABELS[r.source] ?? r.source}</span>
-                <span className="hidden truncate font-mono text-[11px] text-smoke sm:block">
+                <span className="hidden truncate font-mono text-sm text-cream/70 sm:block">
                   {r.ok
                     ? `${r.rowsSeen.toLocaleString()} rows seen · ${r.newLicenses} new · ${r.newEvents} filings`
                     : (r.error ?? "failed").slice(0, 90)}
                 </span>
-                <span className="font-mono text-[11px] text-faint">{fmtDate(r.startedAt)}</span>
-                <span className={`font-mono text-[10px] tracking-[0.15em] ${r.ok ? "text-leaf" : "text-blood"}`}>
+                <span className="font-mono text-sm text-smoke">{fmtDate(r.startedAt)}</span>
+                <span className={`font-mono text-xs tracking-[0.15em] ${r.ok ? "text-leaf" : "text-blood"}`}>
                   {r.ok ? "OK" : "FAIL"}
                 </span>
               </div>
             ))}
             {runRows.length === 0 && (
-              <p className="px-6 py-8 font-mono text-xs text-smoke">No sweeps yet.</p>
+              <p className="px-6 py-8 font-mono text-xs text-cream/70">No sweeps yet.</p>
             )}
           </div>
         </section>
@@ -561,19 +561,19 @@ function Shell({ children }: { children: React.ReactNode }) {
 }
 
 function Code({ children }: { children: React.ReactNode }) {
-  return <span className="rounded border border-line bg-panel px-1.5 py-0.5 font-mono text-[11px] text-amber">{children}</span>;
+  return <span className="rounded border border-line bg-panel px-1.5 py-0.5 font-mono text-sm text-amber">{children}</span>;
 }
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
-  return <h2 className="mb-4 font-mono text-[11px] tracking-[0.28em] text-faint">{String(children).toUpperCase()}</h2>;
+  return <h2 className="mb-4 font-mono text-sm tracking-[0.28em] text-smoke">{String(children).toUpperCase()}</h2>;
 }
 
 function Stat({ label, value, sub }: { label: string; value: string; sub: string }) {
   return (
     <div className="rounded-xl border border-line bg-panel p-5">
-      <p className="font-mono text-[10px] tracking-[0.22em] text-faint">{label.toUpperCase()}</p>
+      <p className="font-mono text-xs tracking-[0.22em] text-smoke">{label.toUpperCase()}</p>
       <p className="font-display mt-2 text-3xl font-semibold text-cream">{value}</p>
-      <p className="mt-1 truncate font-mono text-[10px] text-smoke">{sub}</p>
+      <p className="mt-1 truncate font-mono text-xs text-cream/70">{sub}</p>
     </div>
   );
 }

@@ -84,17 +84,17 @@ export default function FirstCustomerPlaybook() {
             <Rocket className="h-4 w-4 text-amber" />
           </span>
           <div>
-            <p className="font-mono text-[10px] tracking-[0.22em] text-amber">
+            <p className="font-mono text-xs tracking-[0.22em] text-amber">
               FIRST CUSTOMER PLAYBOOK
             </p>
-            <p className="mt-0.5 font-mono text-[10px] text-smoke">
+            <p className="mt-0.5 font-mono text-xs text-cream/70">
               {completed} / {STEPS.length} DONE
             </p>
           </div>
         </div>
         {nextStep && (
           <p className="max-w-md text-sm text-cream">
-            <span className="font-mono text-[10px] tracking-[0.15em] text-amber">
+            <span className="font-mono text-xs tracking-[0.15em] text-amber">
               NEXT →{" "}
             </span>
             {nextStep.label}
@@ -118,17 +118,17 @@ export default function FirstCustomerPlaybook() {
               {isDone ? (
                 <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-leaf" />
               ) : (
-                <Circle className="mt-0.5 h-4 w-4 shrink-0 text-faint" />
+                <Circle className="mt-0.5 h-4 w-4 shrink-0 text-smoke" />
               )}
               <span className="min-w-0">
                 <span
                   className={`block text-sm ${
-                    isDone ? "text-smoke line-through" : "text-cream"
+                    isDone ? "text-cream/70 line-through" : "text-cream"
                   }`}
                 >
                   {s.label}
                 </span>
-                <span className="mt-0.5 block font-mono text-[10px] leading-relaxed text-faint">
+                <span className="mt-0.5 block font-mono text-xs leading-relaxed text-smoke">
                   {s.hint}
                 </span>
               </span>

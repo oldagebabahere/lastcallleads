@@ -55,7 +55,7 @@ export default function AddClientForm({ adminKey }: { adminKey: string }) {
 
   return (
     <form onSubmit={submit} className="mb-5 rounded-xl border border-amber/40 bg-gradient-to-b from-amber/10 to-panel p-5">
-      <p className="font-mono text-[10px] tracking-[0.25em] text-amber">
+      <p className="font-mono text-xs tracking-[0.25em] text-amber">
         MANUAL CLIENT ONBOARD — DEAL CLOSED ON EMAIL? ADD THEM HERE
       </p>
       <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_140px_auto]">
@@ -66,13 +66,13 @@ export default function AddClientForm({ adminKey }: { adminKey: string }) {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="client@distribution.com"
-            className="min-w-0 flex-1 rounded-md border border-line bg-ink px-3.5 py-2.5 text-sm text-cream placeholder:text-faint focus:border-amber/60 focus:outline-none"
+            className="min-w-0 flex-1 rounded-md border border-line bg-ink px-3.5 py-2.5 text-sm text-cream placeholder:text-smoke focus:border-amber/60 focus:outline-none"
           />
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Name (optional)"
-            className="hidden w-40 rounded-md border border-line bg-ink px-3.5 py-2.5 text-sm text-cream placeholder:text-faint focus:border-amber/60 focus:outline-none sm:block"
+            className="hidden w-40 rounded-md border border-line bg-ink px-3.5 py-2.5 text-sm text-cream placeholder:text-smoke focus:border-amber/60 focus:outline-none sm:block"
           />
         </div>
         <div className="flex gap-2">
@@ -81,10 +81,10 @@ export default function AddClientForm({ adminKey }: { adminKey: string }) {
               key={s}
               type="button"
               onClick={() => toggleState(s)}
-              className={`flex-1 rounded-md border px-3 py-2 font-mono text-[11px] tracking-[0.15em] ${
+              className={`flex-1 rounded-md border px-3 py-2 font-mono text-sm tracking-[0.15em] ${
                 states.includes(s)
                   ? "border-amber/60 bg-amber/15 text-amber"
-                  : "border-line bg-ink text-smoke"
+                  : "border-line bg-ink text-cream/70"
               }`}
             >
               {s}
@@ -94,13 +94,13 @@ export default function AddClientForm({ adminKey }: { adminKey: string }) {
         <button
           type="submit"
           disabled={busy}
-          className="flex items-center justify-center gap-2 rounded-md bg-amber px-5 py-2.5 font-mono text-[11px] font-semibold tracking-[0.12em] text-ink transition-transform hover:scale-[1.03] disabled:opacity-50"
+          className="flex items-center justify-center gap-2 rounded-md bg-amber px-5 py-2.5 font-mono text-sm font-semibold tracking-[0.12em] text-ink transition-transform hover:scale-[1.03] disabled:opacity-50"
         >
           {busy ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <UserPlus className="h-3.5 w-3.5" />}
           ADD CLIENT
         </button>
       </div>
-      {msg && <p className="mt-3 font-mono text-[11px] leading-relaxed text-smoke">{msg}</p>}
+      {msg && <p className="mt-3 font-mono text-sm leading-relaxed text-cream/70">{msg}</p>}
     </form>
   );
 }

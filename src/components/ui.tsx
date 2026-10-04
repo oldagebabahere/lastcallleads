@@ -23,18 +23,18 @@ export { fmtDate as fmtDateShared } from "@/lib/fmt";
 export function EventBadge({ type }: { type: string }) {
   if (type === "NEW_PENDING")
     return (
-      <span className="inline-flex items-center gap-1.5 font-mono text-[10px] tracking-[0.18em] text-amber">
+      <span className="inline-flex items-center gap-1.5 font-mono text-xs tracking-[0.18em] text-amber">
         <span className="h-1.5 w-1.5 rounded-full bg-amber pulse-dot" /> FILED
       </span>
     );
   if (type === "NEW_LICENSE")
     return (
-      <span className="inline-flex items-center gap-1.5 font-mono text-[10px] tracking-[0.18em] text-neon">
+      <span className="inline-flex items-center gap-1.5 font-mono text-xs tracking-[0.18em] text-neon">
         <span className="h-1.5 w-1.5 rounded-full bg-neon" /> ISSUED
       </span>
     );
   return (
-    <span className="inline-flex items-center gap-1.5 font-mono text-[10px] tracking-[0.18em] text-smoke">
+    <span className="inline-flex items-center gap-1.5 font-mono text-xs tracking-[0.18em] text-smoke">
       <span className="h-1.5 w-1.5 rounded-full bg-smoke" /> UPDATE
     </span>
   );

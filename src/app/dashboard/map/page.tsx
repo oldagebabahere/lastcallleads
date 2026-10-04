@@ -22,7 +22,7 @@ export default async function MapPage({
       <main className="min-h-screen px-5 py-28">
         <form className="mx-auto max-w-xs space-y-3">
           <input name="key" placeholder="admin key" className="w-full rounded-md border border-line bg-panel px-3 py-2 text-sm text-cream" />
-          <button className="w-full rounded-md bg-amber px-4 py-2 font-mono text-[11px] font-semibold tracking-[0.12em] text-ink">OPEN</button>
+          <button className="w-full rounded-md bg-amber px-4 py-2 font-mono text-sm font-semibold tracking-[0.12em] text-ink">OPEN</button>
         </form>
       </main>
     );
@@ -69,7 +69,7 @@ export default async function MapPage({
         <h1 className="font-display mt-4 text-3xl font-medium text-cream">
           Poora market ek nazar me {st ? `· ${st}` : ""}
         </h1>
-        <p className="mt-2 max-w-2xl text-sm leading-relaxed text-smoke">
+        <p className="mt-2 max-w-2xl text-sm leading-relaxed text-cream/70">
           Attorneys, insurance agents, beverage sellers aur bars — map pe click
           karke naam/phone/website dekho. Demo calls ke liye perfect.
         </p>
@@ -78,8 +78,8 @@ export default async function MapPage({
         <div className="mt-5 flex flex-wrap gap-2">
           <Link
             href={`/dashboard/map?key=${k}`}
-            className={`rounded-md border px-3 py-2 font-mono text-[10px] tracking-[0.12em] ${
-              !st ? "border-amber/60 bg-amber/15 text-amber" : "border-line bg-panel text-smoke hover:text-cream"
+            className={`rounded-md border px-3 py-2 font-mono text-xs tracking-[0.12em] ${
+              !st ? "border-amber/60 bg-amber/15 text-amber" : "border-line bg-panel text-cream/70 hover:text-cream"
             }`}
           >
             ALL
@@ -88,8 +88,8 @@ export default async function MapPage({
             <Link
               key={s.state}
               href={`/dashboard/map?key=${k}&state=${s.state}`}
-              className={`rounded-md border px-3 py-2 font-mono text-[10px] tracking-[0.12em] ${
-                st === s.state ? "border-amber/60 bg-amber/15 text-amber" : "border-line bg-panel text-smoke hover:text-cream"
+              className={`rounded-md border px-3 py-2 font-mono text-xs tracking-[0.12em] ${
+                st === s.state ? "border-amber/60 bg-amber/15 text-amber" : "border-line bg-panel text-cream/70 hover:text-cream"
               }`}
             >
               {s.state} · {s.n.toLocaleString()}
@@ -102,7 +102,7 @@ export default async function MapPage({
         </div>
 
         {pins.length === 0 && (
-          <p className="mt-6 font-mono text-xs text-smoke">
+          <p className="mt-6 font-mono text-xs text-cream/70">
             No pins in this state yet — run the{" "}
             <Link href={`/dashboard/prospects?key=${k}`} className="text-amber hover:underline">
               PROSPECT FINDER
@@ -111,7 +111,7 @@ export default async function MapPage({
           </p>
         )}
 
-        <p className="mt-6 font-mono text-[10px] text-faint">
+        <p className="mt-6 font-mono text-xs text-smoke">
           <Link href={`/dashboard?key=${k}`} className="text-amber hover:underline">← CONTROL ROOM</Link>
           {" · "}Data: OpenStreetMap (ODbL)
         </p>
