@@ -14,7 +14,7 @@ import { ensureSchema } from "@/db/bootstrap";
 import { events, prospects } from "@/db/schema";
 import { isAdminKey } from "@/lib/auth";
 import { clientIp, rateLimit, tooManyRequests } from "@/lib/rate-limit";
-import { and, eq, gt, inArray, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, isNotNull, ne, sql } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -227,12 +227,31 @@ export async function GET(req: Request) {
   const rawCount = Number(countRow[0]?.n ?? 0);
   const filingsThisWeek = rawCount > 1500 ? 0 : rawCount;
 
+  // withEmail=1 -> only prospects that have a website (so an email can be
+  // built). rotate=1 -> a different slice of the pool every day, so the
+  // daily job never re-pulls the same first rows.
+  const withEmail = url.searchParams.get("withEmail") === "1";
+  const rotate = url.searchParams.get("rotate") === "1";
+  const where = and(
+    eq(prospects.state, state),
+    inArray(prospects.category, categories),
+    ...(withEmail ? [isNotNull(prospects.website), ne(prospects.website, "")] : [])
+  );
+  const totalRow = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(prospects)
+    .where(where);
+  const total = Number(totalRow[0]?.n ?? 0);
+  const dayIndex = Math.floor(Date.now() / 86_400_000);
+  const offset = rotate && total > limit ? (dayIndex * limit) % total : 0;
+
   const rows = await db
     .select()
     .from(prospects)
-    .where(and(eq(prospects.state, state), inArray(prospects.category, categories)))
+    .where(where)
     .orderBy(prospects.id)
-    .limit(limit);
+    .limit(limit)
+    .offset(offset);
 
   // OSM sometimes lists the same business twice — dedupe by name.
   const seenNames = new Set<string>();
