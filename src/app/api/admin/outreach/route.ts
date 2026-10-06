@@ -216,11 +216,16 @@ export async function GET(req: Request) {
 
   // Real, current hook: how many filings actually landed this week.
   const weekAgo = new Date(Date.now() - 7 * 86_400_000);
+  // Uses the date at the SOURCE (occurredAt), not detectedAt — detectedAt is
+  // the import time, so a bulk import made every record look "this week"
+  // (e.g. 6,509 filings). If the number still looks implausible, drop it and
+  // let the template sell timing instead of a number.
   const countRow = await db
     .select({ n: sql<number>`count(*)::int` })
     .from(events)
-    .where(and(eq(events.state, state), gt(events.detectedAt, weekAgo)));
-  const filingsThisWeek = Number(countRow[0]?.n ?? 0);
+    .where(and(eq(events.state, state), gt(events.occurredAt, weekAgo)));
+  const rawCount = Number(countRow[0]?.n ?? 0);
+  const filingsThisWeek = rawCount > 1500 ? 0 : rawCount;
 
   const rows = await db
     .select()
@@ -235,10 +240,21 @@ export async function GET(req: Request) {
   for (const p of rows) {
     // Canada safety-net (older harvests pre-date the US-area fix): never
     // email .ca websites/emails or obviously-Canadian business names.
-    const siteOrName = `${p.website ?? ""} ${p.name}`.toLowerCase();
-    if (/\.ca\b/.test(siteOrName) || siteOrName.includes("canada") || siteOrName.includes("canadian")) {
+    const siteOrName = `${p.website ?? ""} ${p.name} ${p.city ?? ""}`.toLowerCase();
+    if (
+      /\.ca\b/.test(siteOrName) ||
+      /\b(canada|canadian|ontario|quebec|british columbia|alberta|manitoba|toronto|vancouver|montreal|calgary|ottawa)\b/.test(siteOrName)
+    ) {
       continue;
     }
+    // Only US-style websites: skip any country-code TLD except .us
+    const host = (p.website ?? "")
+      .toLowerCase()
+      .replace(/^https?:\/\//, "")
+      .replace(/^www\./, "")
+      .split(/[/?#]/)[0];
+    const tld = host.split(".").pop() ?? "";
+    if (tld.length === 2 && tld !== "us") continue;
     const k = p.name.trim().toLowerCase();
     if (seenNames.has(k)) continue;
     seenNames.add(k);
