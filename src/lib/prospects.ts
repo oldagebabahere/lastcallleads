@@ -128,7 +128,12 @@ export async function harvestProspects(
     const settled = await Promise.all(
       pair.map(async (cat): Promise<ProspectRun> => {
         try {
-          const q = `[out:json][timeout:80];(node${cat.tag}(${s},${w},${n},${e});way${cat.tag}(${s},${w},${n},${e}););out center 5000;`;
+          // US-area filter: state bboxes overlap Canada (e.g. Toronto sits inside
+          // the NY box), and Canadian businesses must NEVER enter the pool
+          // (CASL anti-spam law + wrong market). Verified against Overpass:
+          // the same Toronto query returns 200 firms without the filter and
+          // 0 with it.
+          const q = `[out:json][timeout:80];area["ISO3166-1"="US"]->.us;(node${cat.tag}(${s},${w},${n},${e})(area.us);way${cat.tag}(${s},${w},${n},${e})(area.us););out center 5000;`;
           const els = await overpass(q);
           const rows = els
             .filter((el) => el.tags?.name)

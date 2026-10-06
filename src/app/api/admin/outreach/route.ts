@@ -233,6 +233,12 @@ export async function GET(req: Request) {
   const seenNames = new Set<string>();
   const rawLeads: RawLead[] = [];
   for (const p of rows) {
+    // Canada safety-net (older harvests pre-date the US-area fix): never
+    // email .ca websites/emails or obviously-Canadian business names.
+    const siteOrName = `${p.website ?? ""} ${p.name}`.toLowerCase();
+    if (/\.ca\b/.test(siteOrName) || siteOrName.includes("canada") || siteOrName.includes("canadian")) {
+      continue;
+    }
     const k = p.name.trim().toLowerCase();
     if (seenNames.has(k)) continue;
     seenNames.add(k);
