@@ -76,11 +76,15 @@ export default async function ProspectsPage({
         </h1>
         <p className="mt-2 max-w-2xl text-sm leading-relaxed text-cream/70">
           Every attorney, insurance agent, beverage seller and bar in the USA.
-          A new state is auto-harvested daily (cron 13:00 UTC). Download the
-          CSV and start your email/phone outreach.
+          Machine khud bhar ti hai (Wed/Fri ek category + ek naya state).
+          RUN dabao = ek category TURANT (bade state ke liye 4 baar dabao).
+          Phir CSV download karke outreach shuru.
         </p>
 
         {/* run buttons */}
+        <p className="mt-2 font-mono text-xs text-cream/50">
+          1 RUN = 1 category (~30 sec) · poora state = 4 RUN · machine waise bhi Wed/Fri khud bharti hai
+        </p>
         <div className="mt-6 flex flex-wrap gap-2">
           {["TX", "FL", "CA", "NY", "GA", "PA", "IL", "OH", "AZ", "TN"].map((s) => (
             <a

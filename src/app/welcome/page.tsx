@@ -22,6 +22,15 @@ export default function WelcomePage() {
             (every morning). From here on, you will hear about every new filing in your
             territories before the paint is dry on the walls.
           </p>
+          <div className="mx-auto mt-8 max-w-md rounded-xl border border-amber/40 bg-amber/5 p-4 text-left">
+            <p className="text-xs leading-relaxed text-cream/80">
+              <strong className="text-amber">Gmail users, 10 seconds:</strong> when
+              the first digest arrives (tomorrow morning), drag it from the Updates
+              tab to <strong>Primary</strong> and choose{" "}
+              <em>&quot;Always do this&quot;</em> — so the freshest filings are the
+              first thing you see each day.
+            </p>
+          </div>
           <div className="mt-9 flex flex-wrap justify-center gap-4">
             <Link
               href="/feed"

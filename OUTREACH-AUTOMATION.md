@@ -18,12 +18,9 @@ GEMINI_API_KEY=AIza...      ← aistudio.google.com se FREE
 Apna control room kholo → **PROSPECT FINDER** → apna state RUN karo (TX/FL pehle).
 (Ye attorneys/insurance/beverage-sellers nikalta hai — jo tumhari site KHARIDENGE.)
 
-### Step 3 — Google Sheet banao
-- Naya Google Sheet → naam "Last Call Outreach"
-- Row 1 me ye headers (A se I):
-```
-FirstName | Company | Email | County/City | Filings | Status | SentDate | FollowDate | AiLine
-```
+### Step 3 — Google Sheet banao (BAS ITNA)
+- sheets.google.com → naya BLANK Sheet (naam kuch bhi, jaise "Last Call Outreach")
+- **KUCH AUR NAHI** — script "Leads" tab + headings khud bana dega
 
 ### Step 4 — Apps Script paste karo
 Google Sheet me: **Extensions → Apps Script** → purana code delete → neeche ka pura code paste → Save.
@@ -84,8 +81,7 @@ function pullLeads() {
     return;
   }
   const data = JSON.parse(res.getContentText());
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAME);
-  if (!sheet) { Logger.log(`Sheet "${SHEET_NAME}" nahi mili`); return; }
+  const sheet = ensureSheet_(SpreadsheetApp.getActiveSpreadsheet());
 
   // already-listed companies skip (duplicate protection)
   const seen = new Set(
@@ -193,6 +189,23 @@ Good luck this quarter.
 
 ${FROM_NAME}`
   };
+}
+
+
+// "Leads" tab nahi hai to khud bana dete hain (headers ke saath) —
+// setup me sirf blank Sheet chahiye, aur kuch nahi.
+function ensureSheet_(ss) {
+  let sheet = ss.getSheetByName(SHEET_NAME);
+  if (!sheet) {
+    sheet = ss.insertSheet(SHEET_NAME);
+    sheet.getRange(1, 1, 1, 9).setValues([[
+      "FirstName", "Company", "Email", "County/City", "Filings",
+      "Status", "SentDate", "FollowDate", "AiLine"
+    ]]);
+    sheet.getRange(1, 1, 1, 9).setFontWeight("bold");
+    Logger.log(`Sheet "${SHEET_NAME}" banayi (headers ke saath)`);
+  }
+  return sheet;
 }
 
 // ============================================================

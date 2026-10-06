@@ -116,11 +116,20 @@ export function digestHtml(sub: Subscriber, evts: FilingEvent[]): string {
       </div>`
     : "";
 
+  // Gmail tip — only for fresh subscribers (trial week) so it never gets noisy
+  const isNewish =
+    (sub.trialEndsAt && sub.trialEndsAt.getTime() > Date.now()) ||
+    (sub.createdAt && Date.now() - sub.createdAt.getTime() < 7 * 86_400_000);
+  const gmailTip = isNewish
+    ? `<p style="margin:0 0 20px;padding:12px 14px;border:1px solid #3a2c1f;border-radius:8px;color:#c9bfae;font-size:12px;line-height:1.7;font-family:Arial,sans-serif"><strong style="color:#e9a13b">Gmail tip:</strong> this digest may land in your Updates tab. Drag one email to <strong style="color:#fff">Primary</strong> and pick &quot;Always do this&quot; — it will be the first thing you see every morning.</p>`
+    : "";
+
   return `<!doctype html><html><body style="margin:0;background:#0b0906;color:#f2ead9;font-family:Georgia,serif">
   <div style="max-width:640px;margin:0 auto;padding:32px 20px">
     <div style="font-size:11px;letter-spacing:0.25em;color:#e9a13b;text-transform:uppercase;font-family:monospace">${BRAND.name} · New-Filing Digest</div>
     <h1 style="font-size:28px;margin:12px 0 4px;font-weight:600">${evts.length} new filing${evts.length === 1 ? "" : "s"} in your territories</h1>
     <p style="color:#8d8375;font-size:13px;margin:0 0 20px">${hotCount > 0 ? `<strong style="color:#e9a13b">${hotCount} are priority leads</strong> — scored and ranked so you know exactly who to call.` : "Applications filed = buyers deciding in the next 60–90 days. Call first."}</p>
+    ${gmailTip}
     ${topBlock}
     <table style="width:100%;border-collapse:collapse">
       <tr style="text-align:left;color:#8d8375;font-size:10px;letter-spacing:0.15em;text-transform:uppercase;font-family:monospace">

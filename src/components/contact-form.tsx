@@ -68,7 +68,7 @@ export default function ContactForm() {
             <option>Sales question</option>
             <option>Data correction</option>
             <option>Billing or cancellation</option>
-            <option>Partnership or press</option>
+            <option>Press or other</option>
             <option>Technical support</option>
           </select>
         </label>
