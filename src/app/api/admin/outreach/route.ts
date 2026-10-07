@@ -243,20 +243,24 @@ export async function GET(req: Request) {
     .where(where);
   const total = Number(totalRow[0]?.n ?? 0);
   const dayIndex = Math.floor(Date.now() / 86_400_000);
-  const offset = rotate && total > limit ? (dayIndex * limit) % total : 0;
+  // Over-fetch (4x) because the safety filters below drop some rows
+  // (non-US, duplicates) — we trim back to `limit` after filtering.
+  const fetchSize = Math.min(limit * 4, 200);
+  const offset = rotate && total > fetchSize ? (dayIndex * fetchSize) % total : 0;
 
   const rows = await db
     .select()
     .from(prospects)
     .where(where)
     .orderBy(prospects.id)
-    .limit(limit)
+    .limit(fetchSize)
     .offset(offset);
 
   // OSM sometimes lists the same business twice — dedupe by name.
   const seenNames = new Set<string>();
   const rawLeads: RawLead[] = [];
   for (const p of rows) {
+    if (rawLeads.length >= limit) break;
     // Canada safety-net (older harvests pre-date the US-area fix): never
     // email .ca websites/emails or obviously-Canadian business names.
     const siteOrName = `${p.website ?? ""} ${p.name} ${p.city ?? ""}`.toLowerCase();
