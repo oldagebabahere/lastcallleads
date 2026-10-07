@@ -14,6 +14,8 @@ import { ensureSchema } from "@/db/bootstrap";
 import { events, prospects } from "@/db/schema";
 import { isAdminKey } from "@/lib/auth";
 import { clientIp, rateLimit, tooManyRequests } from "@/lib/rate-limit";
+import { harvestDistributors } from "@/lib/distributors";
+import { findRealEmail, mapLimit } from "@/lib/email-finder";
 import { and, desc, eq, gt, inArray, isNotNull, ne, sql } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
@@ -39,7 +41,7 @@ type OutLead = RawLead & {
 };
 
 // The people we sell to — venues themselves (bar) are NOT outreach targets.
-const BUYER_CATEGORIES = ["insurance", "beverage", "attorney"] as const;
+const BUYER_CATEGORIES = ["insurance", "distributor", "beverage", "attorney"] as const;
 
 function domainEmail(site: string | null): string | null {
   if (!site) return null;
@@ -73,7 +75,7 @@ function templateLine(
     if (category === "insurance") {
       return `When a venue files its liquor application in ${where}, liquor-liability coverage is one of the first things it needs — we flag them the morning the filing posts.`;
     }
-    if (category === "beverage") {
+    if (category === "beverage" || category === "distributor") {
       return `Every venue that files a liquor application in ${where} hasn't chosen a distributor yet — we flag them the morning the filing posts.`;
     }
     return `Liquor applications in ${where} regularly hit hearings and objections — we flag every new filing the morning it posts.`;
@@ -81,7 +83,7 @@ function templateLine(
   if (category === "insurance") {
     return `${filings} new liquor applications landed in ${where} this week — most of those venues still need liquor-liability coverage before they can open.`;
   }
-  if (category === "beverage") {
+  if (category === "beverage" || category === "distributor") {
     return `${filings} new liquor applications landed in ${where} this week — every one of them is a venue that hasn't chosen a distributor yet.`;
   }
   return `${filings} new liquor applications landed in ${where} this week — a few usually run into hearings or objections and need counsel before they open.`;
@@ -185,11 +187,13 @@ export async function GET(req: Request) {
       })
       .from(prospects)
       .groupBy(prospects.state);
-    // Only pitch states where we really have license data (see ingest-run.ts).
-    // Otherwise the email would sell data we do not have.
-    const LIVE_STATES = ["TX", "NY", "CA"];
+    // Only pitch states where we really have filing data (events table).
+    const liveRows = await db
+      .selectDistinct({ state: events.state })
+      .from(events);
+    const live = new Set(liveRows.map((r) => r.state));
     pool = counts
-      .filter((c) => c.n >= 20 && LIVE_STATES.includes(c.state))
+      .filter((c) => c.n >= 20 && live.has(c.state))
       .map((c) => c.state)
       .sort();
     if (!pool.length) {
@@ -247,6 +251,12 @@ export async function GET(req: Request) {
   const proof = proofRows
     .filter((r) => r.name && r.name.trim().length > 2)
     .map((r) => (r.city ? `${r.name!.trim()} (${r.city})` : r.name!.trim()));
+
+  // Autopilot: when distributors are requested, look up a few more wholesaler
+  // websites on every pull so the pool refills itself (no manual step).
+  if (categories.includes("distributor")) {
+    await harvestDistributors(state, 8);
+  }
 
   // withEmail=1 -> only prospects that have a website (so an email can be
   // built). rotate=1 -> a different slice of the pool every day, so the
@@ -335,13 +345,21 @@ export async function GET(req: Request) {
     }
   }
 
-  const leads: OutLead[] = rawLeads.map((l) => {
-    const guessed = domainEmail(l.website);
+  // Real emails only: read them off the company's own website. Guessed
+  // info@ addresses bounced for most leads (hurts the sender's reputation),
+  // so they are used only when ?guess=1 is passed.
+  const allowGuess = url.searchParams.get("guess") === "1";
+  const found = await mapLimit(rawLeads, 6, (l) => findRealEmail(l.website));
+
+  const leads: OutLead[] = rawLeads.map((l, idx) => {
+    const real = found[idx];
+    const guessed = allowGuess && !real ? domainEmail(l.website) : null;
+    const email = real ?? guessed ?? "";
     const ai = lines.get(l.company);
     return {
       ...l,
-      email: guessed ?? "",
-      emailSource: guessed ? "guessed" : "none",
+      email,
+      emailSource: real ? "listed" : guessed ? "guessed" : "none",
       filingsThisWeek,
       aiLine:
         (ai && ai.length <= 300 ? ai.trim() : "") ||
@@ -357,7 +375,7 @@ export async function GET(req: Request) {
     filingsThisWeek,
     proof,
     aiProvider: provider,
-    hint: "emailSource 'guessed' = info@<domain> from their website — verify or send at your own risk. 'none' = call them (phone included).",
+    hint: "emailSource 'listed' = a real address found on their own website. 'none' = no email found (not emailed).",
     leads,
   });
 }
