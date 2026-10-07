@@ -14,7 +14,7 @@ import { ensureSchema } from "@/db/bootstrap";
 import { events, prospects } from "@/db/schema";
 import { isAdminKey } from "@/lib/auth";
 import { clientIp, rateLimit, tooManyRequests } from "@/lib/rate-limit";
-import { and, eq, gt, inArray, isNotNull, ne, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNotNull, ne, sql } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -185,8 +185,11 @@ export async function GET(req: Request) {
       })
       .from(prospects)
       .groupBy(prospects.state);
+    // Only pitch states where we really have license data (see ingest-run.ts).
+    // Otherwise the email would sell data we do not have.
+    const LIVE_STATES = ["TX", "NY", "CA"];
     pool = counts
-      .filter((c) => c.n >= 20)
+      .filter((c) => c.n >= 20 && LIVE_STATES.includes(c.state))
       .map((c) => c.state)
       .sort();
     if (!pool.length) {
@@ -226,6 +229,24 @@ export async function GET(req: Request) {
     .where(and(eq(events.state, state), gt(events.occurredAt, weekAgo)));
   const rawCount = Number(countRow[0]?.n ?? 0);
   const filingsThisWeek = rawCount > 1500 ? 0 : rawCount;
+
+  // Proof for the email: 3 real, recent filings (public record) in this state.
+  const proofRows = await db
+    .select({ name: events.tradeName, city: events.city })
+    .from(events)
+    .where(
+      and(
+        eq(events.state, state),
+        isNotNull(events.tradeName),
+        isNotNull(events.occurredAt),
+        gt(events.occurredAt, new Date(Date.now() - 30 * 86_400_000))
+      )
+    )
+    .orderBy(desc(events.occurredAt))
+    .limit(3);
+  const proof = proofRows
+    .filter((r) => r.name && r.name.trim().length > 2)
+    .map((r) => (r.city ? `${r.name!.trim()} (${r.city})` : r.name!.trim()));
 
   // withEmail=1 -> only prospects that have a website (so an email can be
   // built). rotate=1 -> a different slice of the pool every day, so the
@@ -334,6 +355,7 @@ export async function GET(req: Request) {
     state,
     ...(auto ? { autoRotated: true, rotationPool: pool } : {}),
     filingsThisWeek,
+    proof,
     aiProvider: provider,
     hint: "emailSource 'guessed' = info@<domain> from their website — verify or send at your own risk. 'none' = call them (phone included).",
     leads,
