@@ -8,6 +8,7 @@
 import { db } from "@/db";
 import { ensureSchema } from "@/db/bootstrap";
 import { prospects } from "@/db/schema";
+import { and, eq, notInArray } from "drizzle-orm";
 
 export const PROSPECT_CATEGORIES = [
   { id: "attorney", label: "Attorneys", tag: '["office"="lawyer"]' },
@@ -128,12 +129,12 @@ export async function harvestProspects(
     const settled = await Promise.all(
       pair.map(async (cat): Promise<ProspectRun> => {
         try {
-          // US-area filter: state bboxes overlap Canada (e.g. Toronto sits inside
-          // the NY box), and Canadian businesses must NEVER enter the pool
-          // (CASL anti-spam law + wrong market). Verified against Overpass:
-          // the same Toronto query returns 200 firms without the filter and
-          // 0 with it.
-          const q = `[out:json][timeout:80];area["ISO3166-1"="US"]->.us;(node${cat.tag}(${s},${w},${n},${e})(area.us);way${cat.tag}(${s},${w},${n},${e})(area.us););out center 5000;`;
+          // STATE-boundary filter (not just a rough box): bboxes overlap
+          // Canada and neighbouring states (Toronto, Holyoke MA, Hartford CT
+          // all sit inside the NY box). area["ISO3166-2"="US-XX"] is the
+          // real state polygon, so only businesses INSIDE the state come
+          // back. Canadian businesses must never enter the pool (CASL).
+          const q = `[out:json][timeout:80];area["ISO3166-2"="US-${state}"]->.st;(node${cat.tag}(${s},${w},${n},${e})(area.st);way${cat.tag}(${s},${w},${n},${e})(area.st););out center 5000;`;
           const els = await overpass(q);
           const rows = els
             .filter((el) => el.tags?.name)
@@ -160,6 +161,24 @@ export async function harvestProspects(
               .onConflictDoNothing()
               .returning({ id: prospects.id });
             added += r.length;
+          }
+          // Clean-up: drop rows of this state+category that the exact
+          // state-boundary query no longer returns (old border-town /
+          // Canadian leftovers). Safety guards: only when the fresh result
+          // is big enough and not truncated by the 5000 cap.
+          if (rows.length >= 50 && els.length < 5000) {
+            await db
+              .delete(prospects)
+              .where(
+                and(
+                  eq(prospects.state, state),
+                  eq(prospects.category, cat.id),
+                  notInArray(
+                    prospects.osmKey,
+                    rows.map((r) => r.osmKey)
+                  )
+                )
+              );
           }
           return { category: cat.id, ok: true, seen: rows.length, added };
         } catch (err) {
