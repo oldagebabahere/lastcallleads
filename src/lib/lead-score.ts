@@ -226,3 +226,26 @@ export function matchesIntent(
   }
   return false;
 }
+
+// ---------------------------------------------------------------------------
+// Junk filter — nonprofits, churches, clubs and schools mostly file one-off
+// "temporary event" permits. They are not new venues, so they never belong in
+// a paid lead digest (they used to fill the list and dilute the real leads).
+// ---------------------------------------------------------------------------
+const JUNK_ENTITY =
+  /\b(church|catholic|parish|ministr(y|ies)|diocese|chamber of commerce|rotary|lions club|kiwanis|pta|ptso|booster|school district|elementary|middle school|high school|ballet|folklorico|foundation|scouts?|humane society|food bank|fire department|vfd|volunteer fire|historical society)\b/i;
+
+export function isJunkEntity(...parts: (string | null | undefined)[]): boolean {
+  return JUNK_ENTITY.test(parts.filter(Boolean).join(" "));
+}
+
+// Same business often files several permits at once (and several rows per
+// permit). Key used to show each business only once per digest.
+export function dedupeKey(
+  name: string | null | undefined,
+  city: string | null | undefined
+): string {
+  const n = (name ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const c = (city ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  return `${n}|${c}`;
+}
