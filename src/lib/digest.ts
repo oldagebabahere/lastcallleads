@@ -1,9 +1,9 @@
 // Shared digest runner used by the cron route and the manual admin trigger.
 import { db } from "@/db";
 import { and, desc, gt, inArray, eq, lt, or } from "drizzle-orm";
-import { events, subscribers, type FilingEvent } from "@/db/schema";
+import { events, licenses, subscribers, type FilingEvent } from "@/db/schema";
 import { sendBriefing, sendDigest, sendMonthlyRecap, sendTrialEnded } from "./email";
-import { matchesIntent } from "./lead-score";
+import { dedupeKey, isJunkEntity, matchesIntent, scoreFiling } from "./lead-score";
 
 export type DigestReport = {
   subscriber: string;
@@ -118,9 +118,33 @@ export async function runDigest(): Promise<{
       });
     }
 
+    // Clean up BEFORE cutting to the digest size:
+    //  1. drop nonprofits / churches / clubs (one-off event permits)
+    //  2. show each business once (several permits for one applicant)
+    //  3. rank by lead score, so the best leads are never cut by the size cap
+    const scoreOf = (e: FilingEvent) =>
+      scoreFiling({
+        eventType: e.eventType,
+        typeName: e.typeName,
+        city: e.city,
+        county: e.county,
+        occurredAt: e.occurredAt,
+        summary: e.summary,
+      }).value;
+    const best = new Map<string, { e: FilingEvent; v: number }>();
+    for (const e of evts) {
+      if (isJunkEntity(e.tradeName, e.ownerName, e.summary)) continue;
+      const key = dedupeKey(e.tradeName ?? e.summary, e.city);
+      const v = scoreOf(e);
+      const cur = best.get(key);
+      if (!cur || v > cur.v) best.set(key, { e, v });
+    }
+    const ranked = [...best.values()].sort((a, b) => b.v - a.v).map((x) => x.e);
+    const totalFound = ranked.length;
+
     // Respect the subscriber's requested digest size.
     const cap = sub.digestLimit || 40;
-    evts = evts.slice(0, cap);
+    evts = ranked.slice(0, cap);
 
     if (evts.length === 0) {
       await db
@@ -134,7 +158,33 @@ export async function runDigest(): Promise<{
     // One subscriber's failure must never stop the whole run — later runs
     // would otherwise skip everyone queued behind them.
     try {
-      const result = await sendDigest(sub, evts);
+      // Contact details (phone / address / licence type) from the licence
+      // record, so the digest is actually callable — not just a name list.
+      const extra = new Map<
+        string,
+        { phone: string | null; address: string | null; typeName: string | null }
+      >();
+      const keys = evts.map((e) => e.licenseKey).filter((k): k is string => Boolean(k));
+      if (keys.length) {
+        const lic = await db
+          .select({
+            state: licenses.state,
+            key: licenses.licenseKey,
+            phone: licenses.phone,
+            address: licenses.address,
+            typeName: licenses.typeName,
+          })
+          .from(licenses)
+          .where(and(inArray(licenses.state, stateList), inArray(licenses.licenseKey, keys)));
+        for (const l of lic) {
+          extra.set(`${l.state}|${l.key}`, {
+            phone: l.phone,
+            address: l.address,
+            typeName: l.typeName,
+          });
+        }
+      }
+      const result = await sendDigest(sub, evts, { total: totalFound, extra });
       if (result.status !== "error") {
         await db
           .update(subscribers)
