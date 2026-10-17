@@ -13,8 +13,19 @@ export function alertFrom(): string {
   return process.env.ALERT_FROM_EMAIL ?? `${BRAND.name} Alerts <alerts@example.com>`;
 }
 
-export function digestSubject(evts: FilingEvent[]): string {
+export type DigestExtra = Map<
+  string,
+  { phone: string | null; address: string | null; typeName: string | null }
+>;
+export type DigestOpts = { total?: number; extra?: DigestExtra };
+
+export function digestSubject(evts: FilingEvent[], total?: number): string {
   const states = Array.from(new Set(evts.map((e) => e.state))).join(" + ");
+  // "Top N of M" when the digest was cut to the size limit (never imply the
+  // cap is the real number of filings).
+  if (total && total > evts.length) {
+    return `Top ${evts.length} of ${total} new filings — ${states}`;
+  }
   return `${evts.length} new filing${evts.length === 1 ? "" : "s"} — ${states}`;
 }
 
@@ -58,7 +69,11 @@ function whyItMatters(e: FilingEvent): string {
   return "Buying window opens now — call before competitors see the sign.";
 }
 
-export function digestHtml(sub: Subscriber, evts: FilingEvent[]): string {
+export function digestHtml(
+  sub: Subscriber,
+  evts: FilingEvent[],
+  opts: DigestOpts = {}
+): string {
   const unsubscribe = unsubscribeUrls(sub.email);
   const visible = evts.slice(0, 60);
 
@@ -94,11 +109,19 @@ export function digestHtml(sub: Subscriber, evts: FilingEvent[]): string {
           })
         : "";
       const scoreChip = `<span style="display:inline-block;margin-left:6px;background:${hot ? "#e9a13b22" : "#3a222a55"};border:1px solid ${hot ? "#e9a13b55" : "#3a222a"};color:${hot ? "#e9a13b" : "#a79391"};font-size:10px;font-weight:700;padding:1px 6px;border-radius:999px;letter-spacing:0.06em">${score.value}</span>`;
+      const info = e.licenseKey ? opts.extra?.get(`${e.state}|${e.licenseKey}`) : undefined;
+      const details = [info?.typeName, info?.address, info?.phone]
+        .filter((x): x is string => Boolean(x && x.trim()))
+        .map((x) => esc(x))
+        .join(" · ");
+      const detailLine = details
+        ? `<br/><span style="color:#c9bfae;font-size:11px;font-family:Arial,sans-serif">${details}</span>`
+        : "";
       return `<tr>
         <td style="padding:12px 8px;border-bottom:1px solid #2a2318;color:#8d8375;font-size:12px;white-space:nowrap;vertical-align:top">${esc(when)}</td>
         <td style="padding:12px 8px;border-bottom:1px solid #2a2318;font-size:12px;vertical-align:top">${badge}${scoreChip}</td>
         <td style="padding:12px 8px;border-bottom:1px solid #2a2318;vertical-align:top">
-          <span style="color:#f2ead9;font-size:14px;font-family:Georgia,serif">${esc(e.summary)}</span><br/>
+          <span style="color:#f2ead9;font-size:14px;font-family:Georgia,serif">${esc(e.summary)}</span>${detailLine}<br/>
           <span style="color:#8d8375;font-size:11px;font-family:monospace">${esc(score.reason)}</span>
         </td>
         <td style="padding:12px 8px;border-bottom:1px solid #2a2318;color:#8d8375;font-size:12px;vertical-align:top">${esc(e.state)}</td>
@@ -127,7 +150,7 @@ export function digestHtml(sub: Subscriber, evts: FilingEvent[]): string {
   return `<!doctype html><html><body style="margin:0;background:#0b0906;color:#f2ead9;font-family:Georgia,serif">
   <div style="max-width:640px;margin:0 auto;padding:32px 20px">
     <div style="font-size:11px;letter-spacing:0.25em;color:#e9a13b;text-transform:uppercase;font-family:monospace">${BRAND.name} · New-Filing Digest</div>
-    <h1 style="font-size:28px;margin:12px 0 4px;font-weight:600">${evts.length} new filing${evts.length === 1 ? "" : "s"} in your territories</h1>
+    <h1 style="font-size:28px;margin:12px 0 4px;font-weight:600">${opts.total && opts.total > evts.length ? `Top ${evts.length} of ${opts.total} new filings` : `${evts.length} new filing${evts.length === 1 ? "" : "s"}`} in your territories</h1>
     <p style="color:#8d8375;font-size:13px;margin:0 0 20px">${hotCount > 0 ? `<strong style="color:#e9a13b">${hotCount} are priority leads</strong> — scored and ranked so you know exactly who to call.` : "Applications filed = buyers deciding in the next 60–90 days. Call first."}</p>
     ${gmailTip}
     ${topBlock}
@@ -449,9 +472,10 @@ export async function sendWelcome(input: {
 
 export async function sendDigest(
   sub: Subscriber,
-  evts: FilingEvent[]
+  evts: FilingEvent[],
+  opts: DigestOpts = {}
 ): Promise<{ status: SendStatus; detail: string }> {
-  const subject = digestSubject(evts);
+  const subject = digestSubject(evts, opts.total);
   let status: SendStatus = "dry_run";
   let detail = "RESEND_API_KEY not set — email logged, not sent";
 
@@ -469,7 +493,7 @@ export async function sendDigest(
         to: sub.email,
         replyTo: PUBLIC_CONFIG.contactEmail,
         subject,
-        html: digestHtml(sub, evts),
+        html: digestHtml(sub, evts, opts),
         headers: {
           "List-Unsubscribe": `<${unsubscribe.oneClick}>`,
           "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
