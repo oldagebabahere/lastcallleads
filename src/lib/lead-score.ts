@@ -233,7 +233,7 @@ export function matchesIntent(
 // a paid lead digest (they used to fill the list and dilute the real leads).
 // ---------------------------------------------------------------------------
 const JUNK_ENTITY =
-  /\b(church|catholic|parish|ministr(y|ies)|diocese|chamber of commerce|rotary|lions club|kiwanis|pta|ptso|booster|school district|elementary|middle school|high school|ballet|folklorico|foundation|scouts?|humane society|food bank|fire department|vfd|volunteer fire|historical society)\b/i;
+  /\b(church|catholic|parish|ministr(y|ies)|diocese|chamber of commerce|rotary|lions club|kiwanis|pta|ptso|booster|school district|elementary|middle school|high school|ballet|folklorico|foundation|scouts?|humane society|food bank|fire department|vfd|volunteer fire|historical society|temporary event|nonprofit)\b/i;
 
 export function isJunkEntity(...parts: (string | null | undefined)[]): boolean {
   return JUNK_ENTITY.test(parts.filter(Boolean).join(" "));
