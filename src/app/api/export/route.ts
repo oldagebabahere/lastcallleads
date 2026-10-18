@@ -3,7 +3,8 @@
 // subscriber, so no login screen is needed. Returns their recent alerts.
 import { db } from "@/db";
 import { ensureSchema } from "@/db/bootstrap";
-import { events, subscribers } from "@/db/schema";
+import { events, licenses, subscribers } from "@/db/schema";
+import { dedupeKey, isJunkEntity } from "@/lib/lead-score";
 import { verifyUnsubscribeToken } from "@/lib/unsubscribe";
 import { and, desc, gt, inArray, eq } from "drizzle-orm";
 
@@ -56,7 +57,10 @@ export async function GET(req: Request) {
     .split(",")
     .map((k) => k.trim().toLowerCase())
     .filter(Boolean);
-  const filtered = data.filter((e) => {
+  const filtered0 = data.filter((e) => {
+    // Never export federal bulk rows or one-off nonprofit / event permits.
+    if (e.licenseKey?.startsWith("TTB-")) return false;
+    if (isJunkEntity(e.tradeName, e.ownerName, e.summary, e.typeName)) return false;
     const city = (e.city ?? "").toLowerCase();
     if (cityNeedle && !city.includes(cityNeedle)) return false;
     if (keywords.length) {
@@ -66,6 +70,37 @@ export async function GET(req: Request) {
     return true;
   });
 
+  // One row per business (newest first — data is already newest first).
+  const seen = new Set<string>();
+  const filtered = filtered0.filter((e) => {
+    const k = dedupeKey(e.tradeName ?? e.ownerName, e.city);
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+
+  // Contact details from the licence record.
+  const keys = filtered.map((e) => e.licenseKey).filter((k): k is string => Boolean(k));
+  const info = new Map<string, { address: string | null; zip: string | null; phone: string | null }>();
+  for (let i = 0; i < keys.length; i += 500) {
+    const part = await db
+      .select({
+        state: licenses.state,
+        key: licenses.licenseKey,
+        address: licenses.address,
+        zip: licenses.zip,
+        phone: licenses.phone,
+      })
+      .from(licenses)
+      .where(
+        and(
+          stateList.length ? inArray(licenses.state, stateList) : undefined,
+          inArray(licenses.licenseKey, keys.slice(i, i + 500))
+        )
+      );
+    for (const l of part) info.set(`${l.state}|${l.key}`, l);
+  }
+
   const header = [
     "signal",
     "venue",
@@ -73,6 +108,9 @@ export async function GET(req: Request) {
     "city",
     "county",
     "license_type",
+    "address",
+    "zip",
+    "phone",
     "state",
     "event_date",
     "detected_date",
@@ -86,6 +124,9 @@ export async function GET(req: Request) {
       esc(e.city ?? ""),
       esc(e.county ?? ""),
       esc(e.typeName ?? ""),
+      esc(info.get(`${e.state}|${e.licenseKey}`)?.address),
+      esc(info.get(`${e.state}|${e.licenseKey}`)?.zip),
+      esc(info.get(`${e.state}|${e.licenseKey}`)?.phone),
       esc(e.state),
       esc(e.occurredAt ? new Date(e.occurredAt).toISOString().slice(0, 10) : ""),
       esc(new Date(e.detectedAt).toISOString().slice(0, 10)),
