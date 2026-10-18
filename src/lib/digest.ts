@@ -133,7 +133,8 @@ export async function runDigest(): Promise<{
       }).value;
     const best = new Map<string, { e: FilingEvent; v: number }>();
     for (const e of evts) {
-      if (isJunkEntity(e.tradeName, e.ownerName, e.summary)) continue;
+      if (e.licenseKey?.startsWith("TTB-")) continue; // federal bulk list, not a new filing
+      if (isJunkEntity(e.tradeName, e.ownerName, e.summary, e.typeName)) continue;
       const key = dedupeKey(e.tradeName ?? e.summary, e.city);
       const v = scoreOf(e);
       const cur = best.get(key);
