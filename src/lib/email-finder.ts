@@ -4,7 +4,8 @@
 // email addresses we actually saw on the company's site.
 
 const PAGES = ["", "/contact", "/contact-us", "/about", "/about-us"];
-const BAD_LOCAL = /^(no-?reply|donotreply|do-not-reply|example|test|sentry|wixpress|webmaster|postmaster|abuse|privacy|unsubscribe|mailer-daemon)$/i;
+// Mailboxes that are never a sales contact (reporting / legal / HR / system addresses).
+const BAD_LOCAL = /^(no-?reply|donotreply|do-not-reply|example|test|sentry|wixpress|webmaster|postmaster|abuse|privacy|unsubscribe|mailer-daemon|phishing|spam|security|fraud|report|reports|legal|compliance|hr|careers|jobs|recruiting|press|media|billing|accounting|noc|dmca|copyright|ethics|whistleblower|investor|investors|ir|claims|complaints|unsubscribe|optout|opt-out|support-?abuse|admin-?abuse)$/i;
 const GOOD_LOCAL = /^(sales|contact|info|office|hello|quotes?|admin|service|support|inquiries|inquiry|orders)$/i;
 
 function originOf(site: string): { origin: string; host: string } | null {
