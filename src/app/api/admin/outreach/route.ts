@@ -228,9 +228,18 @@ export async function GET(req: Request) {
   // (e.g. 6,509 filings). If the number still looks implausible, drop it and
   // let the template sell timing instead of a number.
   const countRow = await db
-    .select({ n: sql<number>`count(*)::int` })
+    .select({ n: sql<number>`count(distinct ${events.licenseKey})::int` })
     .from(events)
-    .where(and(eq(events.state, state), gt(events.occurredAt, weekAgo)));
+    .where(
+      and(
+        eq(events.state, state),
+        eq(events.eventType, "NEW_PENDING"), // real new applications only (no status changes)
+        gt(events.occurredAt, weekAgo),
+        sql`${events.licenseKey} NOT LIKE 'TTB-%'`,
+        sql`coalesce(${events.typeName}, '') NOT ILIKE '%temporary%'`,
+        sql`coalesce(${events.typeName}, '') NOT ILIKE '%nonprofit%'`
+      )
+    );
   const rawCount = Number(countRow[0]?.n ?? 0);
   const filingsThisWeek = rawCount > 1500 ? 0 : rawCount;
 
