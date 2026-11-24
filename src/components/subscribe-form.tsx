@@ -1,17 +1,36 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { ArrowRight, CheckCircle2, LoaderCircle } from "lucide-react";
 import StatePicker from "@/components/state-picker";
+import { LIVE_STATE_SET } from "@/lib/states";
 
 type Phase = "idle" | "sending" | "done" | "error";
 
-export default function SubscribeForm({ plan }: { plan: "solo" | "pro" }) {
+export default function SubscribeForm({
+  plan,
+  defaultState = "TX",
+}: {
+  plan: "solo" | "pro";
+  defaultState?: string;
+}) {
   const maxStates = plan === "solo" ? 1 : 3;
+  const initialSt = LIVE_STATE_SET.has(defaultState.toUpperCase())
+    ? defaultState.toUpperCase()
+    : "TX";
   const [email, setEmail] = useState("");
-  const [states, setStates] = useState<string[]>(["TX"]);
+  const [states, setStates] = useState<string[]>([initialSt]);
   const [phase, setPhase] = useState<Phase>("idle");
   const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    const qsState = (new URLSearchParams(window.location.search).get("state") ?? "")
+      .trim()
+      .toUpperCase();
+    if (qsState && LIVE_STATE_SET.has(qsState) && qsState !== initialSt) {
+      queueMicrotask(() => setStates([qsState]));
+    }
+  }, [initialSt]);
 
   function toggleState(s: string) {
     setStates((prev) => {

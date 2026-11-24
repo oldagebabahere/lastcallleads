@@ -658,7 +658,7 @@ export async function runAutoOutreach(
       <p>${esc(openerParagraph)}</p>
       <ul style="padding-left:18px">${barsListHtml}</ul>
       <p>${pitchTail}</p>
-      <p><a href="${base}/sample" style="color:#8b2c43;font-weight:700">See a live sample dossier →</a> &nbsp;|&nbsp; <a href="${base}/map?state=${encodeURIComponent(state)}" style="color:#8b2c43;font-weight:700">Preview ${esc(fullState)} map →</a> &nbsp;|&nbsp; <a href="${base}/#pricing" style="color:#8b2c43;font-weight:700">Start 7-day free trial (no card) →</a></p>
+      <p><a href="${base}/sample" style="color:#8b2c43;font-weight:700">See a live sample dossier →</a> &nbsp;|&nbsp; <a href="${base}/map?state=${encodeURIComponent(state)}" style="color:#8b2c43;font-weight:700">Preview ${esc(fullState)} map →</a> &nbsp;|&nbsp; <a href="${base}/?state=${encodeURIComponent(state)}#pricing" style="color:#8b2c43;font-weight:700">Start 7-day free trial (no card) →</a></p>
       <p>Best,<br/>${esc(PUBLIC_CONFIG.founderName || BRAND.name)}<br/>${esc(BRAND.name)}</p>
       <p style="margin-top:24px;font-size:11px;color:#777">
         Reply &ldquo;stop&rdquo; anytime and I will never email again. ${esc(PUBLIC_CONFIG.legalName)}${PUBLIC_CONFIG.postalAddress ? ` · ${esc(PUBLIC_CONFIG.postalAddress)}` : ""}

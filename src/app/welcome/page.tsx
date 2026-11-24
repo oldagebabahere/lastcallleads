@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { and, desc, eq, gt, inArray, notLike } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, notLike, sql } from "drizzle-orm";
 import {
   ArrowRight,
   CheckCircle2,
@@ -99,6 +99,7 @@ export default async function WelcomePage({
           and(
             inArray(events.state, targetStates),
             gt(events.occurredAt, cutoff),
+            sql`${events.occurredAt} <= now() + interval '1 day'`,
             notLike(events.licenseKey, "TTB-%")
           )
         )

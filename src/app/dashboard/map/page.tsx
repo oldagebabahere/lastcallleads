@@ -5,6 +5,7 @@ import { db } from "@/db";
 import { ensureSchema } from "@/db/bootstrap";
 import { prospects } from "@/db/schema";
 import { adminKeySet, isAdminKey } from "@/lib/auth";
+import { isJunkProspect } from "@/lib/prospects";
 import { LIVE_STATE_CODES } from "@/lib/states";
 import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import ProspectMap, { type MapPin } from "@/components/prospect-map";
@@ -52,7 +53,7 @@ export default async function MapPage({
     .limit(20);
 
   const pins: MapPin[] = rows
-    .filter((r) => r.lat !== null && r.lng !== null)
+    .filter((r) => r.lat !== null && r.lng !== null && !isJunkProspect(r.name, r.website, r.category))
     .map((r) => ({
       name: r.name,
       category: r.category,
@@ -67,13 +68,13 @@ export default async function MapPage({
   return (
     <main className="min-h-screen px-5 pb-20 pt-24">
       <div className="mx-auto max-w-6xl">
-        <p className="eyebrow">[ Map View · {pins.length.toLocaleString()} pins ]</p>
+        <p className="eyebrow">[ Prospect Map · {pins.length.toLocaleString()} verified buyers ]</p>
         <h1 className="font-display mt-4 text-3xl font-medium text-cream">
-          Poora market ek nazar me {st ? `· ${st}` : ""}
+          B2B Buyer Territory Map {st ? `· ${st}` : ""}
         </h1>
         <p className="mt-2 max-w-2xl text-sm leading-relaxed text-cream/70">
-          Attorneys, insurance agents, beverage sellers aur bars — map pe click
-          karke naam/phone/website dekho. Demo calls ke liye perfect.
+          Craft breweries, beverage distributors, independent liquor insurance brokers &amp;
+          hospitality attorneys — click any pin for phone &amp; website.
         </p>
 
         {/* state filter chips */}

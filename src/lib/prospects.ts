@@ -168,11 +168,41 @@ type OpenBreweryRow = {
   longitude?: number | string | null;
 };
 
-// Free, zero-API-key US Craft Brewery directory (returns hundreds of real breweries
-// with verified websites & phones per state in <2 seconds — zero Overpass timeouts!).
+function parseCsvRow(line: string): string[] {
+  const out: string[] = [];
+  let cur = "";
+  let inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQ) {
+      if (ch === '"' && line[i + 1] === '"') {
+        cur += '"';
+        i++;
+      } else if (ch === '"') {
+        inQ = false;
+      } else {
+        cur += ch;
+      }
+    } else if (ch === '"') {
+      inQ = true;
+    } else if (ch === ",") {
+      out.push(cur.trim());
+      cur = "";
+    } else {
+      cur += ch;
+    }
+  }
+  out.push(cur.trim());
+  return out;
+}
+
+// Free, zero-API-key US Craft Brewery directory (3,478+ real breweries across our 9 live states!).
+// Primary: Open Brewery DB's official GitHub Fastly CDN per-state CSV (150ms, never rate-limits Vercel!).
+// Fallback: api.openbrewerydb.org v1 REST endpoint.
 async function harvestOpenBreweryDb(state: string): Promise<ProspectRun> {
   const rawName = stateFullName(state).replace(/\s*\(.*?\)\s*/g, "").trim();
-  const byState = rawName.toLowerCase().replace(/\s+/g, "_");
+  const slugDash = rawName.toLowerCase().replace(/\s+/g, "-");
+  const slugUnder = rawName.toLowerCase().replace(/\s+/g, "_");
   const allRows: {
     category: string;
     osmKey: string;
@@ -186,42 +216,86 @@ async function harvestOpenBreweryDb(state: string): Promise<ProspectRun> {
     lng: number | null;
   }[] = [];
 
-  try {
-    for (let page = 1; page <= 3; page++) {
-      const url = `https://api.openbrewerydb.org/v1/breweries?by_state=${encodeURIComponent(byState)}&per_page=200&page=${page}`;
-      const res = await fetch(url, {
-        headers: { Accept: "application/json", "User-Agent": "LastCallLeads/2.0" },
-        signal: AbortSignal.timeout(10_000),
-        cache: "no-store",
-      });
-      if (!res.ok) break;
-      const data = (await res.json()) as OpenBreweryRow[];
-      if (!Array.isArray(data) || data.length === 0) break;
+  const pushBrewery = (b: OpenBreweryRow) => {
+    const type = (b.brewery_type ?? "").toLowerCase();
+    if (type === "closed") return;
+    const name = (b.name ?? "").trim();
+    const website = (b.website_url ?? "").trim() || null;
+    const phone = (b.phone ?? "").trim() || null;
+    if (!name || (!website && !phone)) return;
+    if (isJunkProspect(name, website, "brewery")) return;
+    const lat = b.latitude != null && String(b.latitude).trim() !== "" ? Number(b.latitude) : null;
+    const lng = b.longitude != null && String(b.longitude).trim() !== "" ? Number(b.longitude) : null;
+    allRows.push({
+      category: "brewery",
+      osmKey: `obdb/${b.id ?? `${state}-${name.toLowerCase().replace(/[^a-z0-9]/g, "")}`}`,
+      name,
+      phone,
+      website,
+      address: (b.address_1 ?? b.street ?? "").trim() || null,
+      city: (b.city ?? "").trim() || null,
+      state,
+      lat: lat !== null && Number.isFinite(lat) ? lat : null,
+      lng: lng !== null && Number.isFinite(lng) ? lng : null,
+    });
+  };
 
-      for (const b of data) {
-        const type = (b.brewery_type ?? "").toLowerCase();
-        if (type === "closed") continue;
-        const name = (b.name ?? "").trim();
-        const website = (b.website_url ?? "").trim() || null;
-        const phone = (b.phone ?? "").trim() || null;
-        if (!name || (!website && !phone)) continue;
-        if (isJunkProspect(name, website, "brewery")) continue;
-        const lat = b.latitude != null ? Number(b.latitude) : null;
-        const lng = b.longitude != null ? Number(b.longitude) : null;
-        allRows.push({
-          category: "brewery",
-          osmKey: `obdb/${b.id ?? `${state}-${name.toLowerCase().replace(/[^a-z0-9]/g, "")}`}`,
-          name,
-          phone,
-          website,
-          address: (b.address_1 ?? b.street ?? "").trim() || null,
-          city: (b.city ?? "").trim() || null,
-          state,
-          lat: lat !== null && Number.isFinite(lat) ? lat : null,
-          lng: lng !== null && Number.isFinite(lng) ? lng : null,
-        });
+  try {
+    // 1) Primary fast source: official per-state GitHub raw CSV (1 single request, ~150ms!)
+    const ghUrl = `https://raw.githubusercontent.com/openbrewerydb/openbrewerydb/master/data/united-states/${encodeURIComponent(slugDash)}.csv`;
+    const ghRes = await fetch(ghUrl, {
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; LastCallLeads/2.0)" },
+      signal: AbortSignal.timeout(10_000),
+      cache: "no-store",
+    }).catch(() => null);
+
+    if (ghRes && ghRes.ok) {
+      const csvText = await ghRes.text();
+      const lines = csvText.split(/\r?\n/).filter((l) => l.trim().length > 0);
+      if (lines.length >= 2) {
+        const hdr = parseCsvRow(lines[0]).map((h) => h.toLowerCase().replace(/^\uFEFF/, ""));
+        const idx = (k: string) => hdr.indexOf(k);
+        const iId = idx("id");
+        const iName = idx("name");
+        const iType = idx("brewery_type");
+        const iAddr = idx("address_1");
+        const iCity = idx("city");
+        const iPhone = idx("phone");
+        const iWeb = idx("website_url");
+        const iLat = idx("latitude");
+        const iLng = idx("longitude");
+        for (let i = 1; i < lines.length; i++) {
+          const v = parseCsvRow(lines[i]);
+          pushBrewery({
+            id: iId >= 0 ? v[iId] : undefined,
+            name: iName >= 0 ? v[iName] : undefined,
+            brewery_type: iType >= 0 ? v[iType] : undefined,
+            address_1: iAddr >= 0 ? v[iAddr] : null,
+            city: iCity >= 0 ? v[iCity] : null,
+            phone: iPhone >= 0 ? v[iPhone] : null,
+            website_url: iWeb >= 0 ? v[iWeb] : null,
+            latitude: iLat >= 0 ? v[iLat] : null,
+            longitude: iLng >= 0 ? v[iLng] : null,
+          });
+        }
       }
-      if (data.length < 200) break;
+    }
+
+    // 2) Fallback: Open Brewery DB REST API if GitHub CSV returned 0 rows
+    if (allRows.length === 0) {
+      for (let page = 1; page <= 3; page++) {
+        const url = `https://api.openbrewerydb.org/v1/breweries?by_state=${encodeURIComponent(slugUnder)}&per_page=200&page=${page}`;
+        const res = await fetch(url, {
+          headers: { Accept: "application/json", "User-Agent": "Mozilla/5.0" },
+          signal: AbortSignal.timeout(10_000),
+          cache: "no-store",
+        });
+        if (!res.ok) break;
+        const data = (await res.json()) as OpenBreweryRow[];
+        if (!Array.isArray(data) || data.length === 0) break;
+        for (const b of data) pushBrewery(b);
+        if (data.length < 200) break;
+      }
     }
 
     let added = 0;

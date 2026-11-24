@@ -1,12 +1,13 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowRight, Database, FileText, Radio } from "lucide-react";
+import { Database, FileText, Radio } from "lucide-react";
 import type { Metadata } from "next";
 import { and, desc, eq, notLike, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { ensureSchema } from "@/db/bootstrap";
 import { events, licenses } from "@/db/schema";
 import { Footer, LeadRow, Nav } from "@/components/ui";
+import SubscribeForm from "@/components/subscribe-form";
 import { embargoCutoff, maskName } from "@/lib/queries";
 import { isJunkEntity } from "@/lib/lead-score";
 
@@ -117,9 +118,11 @@ export default async function StatePage({
         .select()
         .from(events)
         .where(
-          s.code === "FL"
-            ? eq(events.state, s.code)
-            : and(eq(events.state, s.code), notLike(events.licenseKey, "TTB-%"))
+          and(
+            eq(events.state, s.code),
+            sql`${events.occurredAt} <= now() + interval '1 day'`,
+            notLike(events.licenseKey, "TTB-%")
+          )
         )
         .orderBy(desc(events.occurredAt))
         .limit(40),
@@ -150,7 +153,7 @@ export default async function StatePage({
   const faq = [
     {
       q: `Where do new ${s.name} liquor license applications get published?`,
-      a: "They come from the official state licensing registry and federal TTB filings, refreshed regularly. Our system watches them every morning and translates changes into alerts.",
+      a: `They come straight from the official ${s.name} state alcohol licensing portal, swept every morning and translated into ready-to-call dossiers.`,
     },
     {
       q: `How fast will I hear about a new ${s.name} filing?`,
@@ -260,12 +263,9 @@ export default async function StatePage({
               <p className="mt-2 text-sm leading-relaxed text-smoke">
                 Get every new {s.name} filing in your inbox the morning it posts — free for 7 days.
               </p>
-              <Link
-                href="/#pricing"
-                className="mt-4 flex items-center justify-center gap-1.5 rounded-md bg-amber px-4 py-2.5 font-mono text-[11px] font-semibold tracking-[0.12em] text-[#140b0e] transition-transform hover:scale-[1.02]"
-              >
-                START 7-DAY FREE TRIAL <ArrowRight className="h-3.5 w-3.5" />
-              </Link>
+              <div className="mt-4">
+                <SubscribeForm plan="solo" defaultState={s.code} />
+              </div>
             </div>
 
             <div className="rounded-xl border border-line bg-panel p-6">

@@ -1,6 +1,6 @@
 // Shared digest, briefing, and monthly recap runner.
 import { db, pool } from "@/db";
-import { and, desc, eq, gt, ilike, inArray, isNull, lt, notLike, or } from "drizzle-orm";
+import { and, desc, eq, gt, ilike, inArray, isNull, lt, notLike, or, sql } from "drizzle-orm";
 import { events, licenses, subscribers, type FilingEvent } from "@/db/schema";
 import {
   sendBriefing,
@@ -93,11 +93,12 @@ export async function runDigest(): Promise<{
     const freshWindow = new Date(Date.now() - 21 * 86_400_000);
     const cityWant = (sub.cityFilter ?? "").trim();
 
-    // Push down state + strict 21-day occurrence freshness + non-TTB + optional city filter.
+    // Push down state + strict 21-day occurrence freshness + no future-dated renewals + non-TTB + optional city filter.
     const conds = [
       inArray(events.state, stateList),
       gt(events.detectedAt, since),
       gt(events.occurredAt, freshWindow),
+      sql`${events.occurredAt} <= now() + interval '1 day'`,
       or(isNull(events.licenseKey), notLike(events.licenseKey, "TTB-%")),
     ];
     if (cityWant) {

@@ -1,5 +1,5 @@
 // Email delivery via Resend (with automatic dry-run logging when RESEND_API_KEY is unset).
-import { and, desc, gt, inArray, notLike } from "drizzle-orm";
+import { and, desc, gt, inArray, notLike, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { emailLog, events, licenses, type FilingEvent, type Subscriber } from "@/db/schema";
 import { BRAND } from "@/lib/brand";
@@ -358,6 +358,7 @@ export async function sendTrialStarted(input: {
           and(
             inArray(events.state, stateCodes.length ? stateCodes : ["TX"]),
             gt(events.occurredAt, cutoff),
+            sql`${events.occurredAt} <= now() + interval '1 day'`,
             notLike(events.licenseKey, "TTB-%")
           )
         )
@@ -491,10 +492,8 @@ export async function sendTrialEnded(sub: {
     detail = "postal address missing (CAN-SPAM)";
   } else if (ready) {
     const unsubscribe = unsubscribeUrls(sub.email);
-    const upgradeHref = checkoutUpgradeUrl(
-      sub.email,
-      sub.plan === "pro" ? "pro" : "solo"
-    );
+    const proUpgradeHref = checkoutUpgradeUrl(sub.email, "pro");
+    const soloUpgradeHref = checkoutUpgradeUrl(sub.email, "solo");
     const res = await sendTransactionalMail({
       from: alertFrom(),
       to: sub.email,
@@ -506,11 +505,17 @@ export async function sendTrialEnded(sub: {
       },
       html: `<!doctype html><html><body style="margin:0;background:#0b0906;color:#f2ead9;font-family:Georgia,serif">
         <div style="max-width:620px;margin:auto;padding:36px 20px">
-          <div style="font-size:11px;letter-spacing:0.25em;color:#e9a13b;text-transform:uppercase;font-family:monospace">${esc(BRAND.name)}</div>
-          <h1 style="font-size:26px;margin:12px 0 4px">Your trial week is up.</h1>
-          <p style="color:#c9bfae;font-size:14px;line-height:1.7">For seven days you saw every new filing in <strong style="color:#f2ead9">${esc(prettyStates)}</strong> the morning it posted. That was the full paid service — no watered-down preview.</p>
-          <p style="color:#c9bfae;font-size:14px;line-height:1.7">Venues in your territory keep filing every morning. Keep your daily email running and stay first in line.</p>
-          <p style="margin:28px 0"><a href="${upgradeHref}" style="background:#e9a13b;color:#1a0e12;padding:12px 24px;border-radius:999px;font-family:monospace;font-size:13px;font-weight:700;letter-spacing:0.08em;text-decoration:none;display:inline-block">KEEP THE ALERTS COMING →</a></p>
+          ${emailBrandHeader("Trial Ended · Seat Hold")}
+          <h1 style="font-size:26px;margin:12px 0 6px">Your 7-day trial week just ended.</h1>
+          <p style="color:#c9bfae;font-size:14px;line-height:1.7">For seven days you saw every new liquor-license filing in <strong style="color:#f2ead9">${esc(prettyStates)}</strong> the morning it posted — complete with street address, legal LLC, beverage spend estimate, and Google Maps route.</p>
+          <p style="color:#c9bfae;font-size:14px;line-height:1.7">New bars &amp; liquor stores keep filing every morning. We strictly cap each state at <strong style="color:#e9a13b">5 active seats</strong> — lock yours in now before another rep takes the territory.</p>
+          <div style="margin:24px 0;padding:18px;border:1px solid #e9a13b55;border-radius:12px;background:#261218">
+            <div style="font-family:monospace;font-size:10px;letter-spacing:0.18em;color:#e9a13b;font-weight:700">BEST VALUE · SAVE 36% ON 3 STATES</div>
+            <p style="margin:8px 0 14px;color:#f2ead9;font-size:14px;line-height:1.6"><strong>Pro Multi-State ($249/mo)</strong> — Any 3 states, up to 3 rep seats, Slack/CRM webhooks, and unlimited 19-column CSV exports.</p>
+            <a href="${proUpgradeHref}" style="background:#e9a13b;color:#140b0e;padding:12px 22px;border-radius:8px;font-family:monospace;font-size:12px;font-weight:700;letter-spacing:0.08em;text-decoration:none;display:inline-block">LOCK IN PRO ($249/MO) →</a>
+            &nbsp;&nbsp;
+            <a href="${soloUpgradeHref}" style="color:#c9bfae;font-family:monospace;font-size:11px;text-decoration:underline">Or Solo 1-State ($129/mo)</a>
+          </div>
           <p style="color:#8d8375;font-size:11px;line-height:1.7;font-family:monospace">
             <a href="${siteUrl()}/#pricing" style="color:#e9a13b">Compare plans</a> ·
             <a href="${unsubscribe.page}" style="color:#e9a13b">Stop alert emails</a><br/>

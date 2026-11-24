@@ -7,7 +7,7 @@ import { events, licenses, subscribers } from "@/db/schema";
 import { buildBeverageDossier, parseEventMeta } from "@/lib/beverage-intel";
 import { dedupeKey, isJunkEntity, matchesIntent, scoreFiling } from "@/lib/lead-score";
 import { verifyScopedToken } from "@/lib/unsubscribe";
-import { and, desc, eq, gt, inArray, isNull, notLike, or } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNull, notLike, or, sql } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
@@ -58,6 +58,7 @@ export async function GET(req: Request) {
       and(
         stateList.length ? inArray(events.state, stateList) : undefined,
         gt(events.occurredAt, since),
+        sql`${events.occurredAt} <= now() + interval '1 day'`,
         or(isNull(events.licenseKey), notLike(events.licenseKey, "TTB-%"))
       )
     )

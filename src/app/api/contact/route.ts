@@ -1,9 +1,11 @@
 import { db } from "@/db";
 import { ensureSchema } from "@/db/bootstrap";
 import { contactMessages } from "@/db/schema";
+import { alertFrom } from "@/lib/email";
+import { isMailTransportConfigured, sendTransactionalMail } from "@/lib/mailer";
+import { sendTelegramOwner } from "@/lib/notify";
 import { PUBLIC_CONFIG } from "@/lib/public-config";
 import { clientIp, rateLimit, tooManyRequests } from "@/lib/rate-limit";
-import { Resend } from "resend";
 
 export const dynamic = "force-dynamic";
 
@@ -52,22 +54,30 @@ export async function POST(req: Request) {
     message,
   });
 
-  const key = process.env.RESEND_API_KEY;
-  const supportInbox = process.env.SUPPORT_INBOX_EMAIL;
-  const from = process.env.ALERT_FROM_EMAIL;
-  if (key && supportInbox && from) {
-    try {
-      const resend = new Resend(key);
-      await resend.emails.send({
-        from,
-        to: supportInbox,
-        replyTo: email,
-        subject: `[Website] ${subject}`,
-        text: `Name: ${name}\nEmail: ${email}\nCompany: ${company ?? "—"}\n\n${message}`,
-      });
-    } catch {
-      // The message is already safe in Postgres; owner can see it there later.
-    }
+  // Instant Telegram alert so you never miss an Enterprise ($499/mo) or sales inquiry!
+  await sendTelegramOwner(
+    `📩 NEW CONTACT / SALES INQUIRY!\nFrom: ${name} <${email}>${company ? `\nCompany: ${company}` : ""}\nSubject: ${subject}\n\n${message.slice(0, 600)}`
+  ).catch(() => undefined);
+
+  const supportInbox = (
+    process.env.SUPPORT_INBOX_EMAIL ??
+    process.env.OPS_EMAIL ??
+    process.env.SMTP_USER ??
+    ""
+  ).trim();
+  if (supportInbox && isMailTransportConfigured()) {
+    const esc = (s: string) =>
+      s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    await sendTransactionalMail({
+      from: alertFrom(),
+      to: supportInbox,
+      replyTo: email,
+      subject: `[Website] ${subject}`,
+      html: `<div style="font-family:Arial,sans-serif;line-height:1.6">
+        <p><strong>Name:</strong> ${esc(name)}<br/><strong>Email:</strong> ${esc(email)}<br/><strong>Company:</strong> ${esc(company ?? "—")}</p>
+        <p style="white-space:pre-wrap">${esc(message)}</p>
+      </div>`,
+    }).catch(() => undefined);
   }
 
   return Response.json({
