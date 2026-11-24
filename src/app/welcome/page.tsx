@@ -15,7 +15,7 @@ import { ensureSchema } from "@/db/bootstrap";
 import { events, licenses, subscribers } from "@/db/schema";
 import { buildBeverageDossier, parseEventMeta } from "@/lib/beverage-intel";
 import { dedupeKey, isJunkEntity, scoreFiling } from "@/lib/lead-score";
-import { LIVE_STATE_SET, formatStateNames, stateFullName } from "@/lib/states";
+import { LIVE_STATE_SET, formatStateNames } from "@/lib/states";
 import {
   checkoutUpgradeUrl,
   exportUrl,
@@ -256,8 +256,7 @@ export default async function WelcomePage({
                   INSTANT ACCESS · CALL THESE FIRST
                 </p>
                 <h2 className="font-display mt-1 text-2xl font-medium text-cream">
-                  Top {instantLeads.length} freshly filed accounts in{" "}
-                  {stateFullName(primaryState)} right now
+                  Top {instantLeads.length} freshly filed accounts in {territoryPretty} right now
                 </h2>
               </div>
               <Link
