@@ -427,7 +427,7 @@ export default async function Dashboard({
         {/* ===== 4. MAIN 2-COLUMN WORKSPACE: CUSTOMERS + LIVE ACTIVITY ===== */}
         <section className="grid gap-6 lg:grid-cols-12">
           {/* LEFT: SUBSCRIBERS + QUICK ADD */}
-          <div className="space-y-4 lg:col-span-7">
+          <div className="min-w-0 space-y-4 lg:col-span-7">
             <div className="rounded-2xl border border-line bg-panel p-5">
               <div className="mb-4 flex items-center justify-between">
                 <h2 className="font-display text-xl font-medium text-cream">
@@ -483,7 +483,7 @@ export default async function Dashboard({
           </div>
 
           {/* RIGHT: RECENT EMAILS + CONTACT INBOX */}
-          <div className="space-y-4 lg:col-span-5">
+          <div className="min-w-0 space-y-4 lg:col-span-5">
             <div className="rounded-2xl border border-line bg-panel p-5">
               <h2 className="font-display mb-3 text-xl font-medium text-cream">
                 Live Email Log <span className="text-sm text-smoke">(Last 10)</span>

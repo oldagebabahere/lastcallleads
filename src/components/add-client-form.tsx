@@ -78,25 +78,25 @@ export default function AddClientForm({ adminKey }: { adminKey: string }) {
       <p className="font-mono text-xs tracking-[0.22em] text-amber">
         MANUAL CLIENT ONBOARD — 9 LIVE MARKETS · ANY PLAN
       </p>
-      <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_180px_190px_auto]">
+      <div className="mt-4 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
         <input
           type="email"
           required
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           placeholder="client@distribution.com"
-          className="min-w-0 rounded-md border border-line bg-ink px-3.5 py-2.5 text-sm text-cream placeholder:text-smoke focus:border-amber/60 focus:outline-none"
+          className="min-w-0 w-full rounded-md border border-line bg-ink px-3.5 py-2.5 text-sm text-cream placeholder:text-smoke focus:border-amber/60 focus:outline-none"
         />
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="Name (optional)"
-          className="min-w-0 rounded-md border border-line bg-ink px-3.5 py-2.5 text-sm text-cream placeholder:text-smoke focus:border-amber/60 focus:outline-none"
+          className="min-w-0 w-full rounded-md border border-line bg-ink px-3.5 py-2.5 text-sm text-cream placeholder:text-smoke focus:border-amber/60 focus:outline-none"
         />
         <select
           value={plan}
           onChange={(e) => onPlanChange(e.target.value as "solo" | "pro" | "enterprise")}
-          className="rounded-md border border-line bg-ink px-3 py-2.5 text-sm text-cream focus:border-amber/60 focus:outline-none"
+          className="min-w-0 w-full rounded-md border border-line bg-ink px-3 py-2.5 text-sm text-cream focus:border-amber/60 focus:outline-none"
         >
           <option value="solo">Territory ($129 · 1 st)</option>
           <option value="pro">Multi-State ($249 · 3 st)</option>
@@ -105,7 +105,7 @@ export default function AddClientForm({ adminKey }: { adminKey: string }) {
         <button
           type="submit"
           disabled={busy}
-          className="flex items-center justify-center gap-2 rounded-md bg-amber px-5 py-2.5 font-mono text-xs font-semibold tracking-[0.12em] text-[#140b0e] transition-transform hover:scale-[1.03] disabled:opacity-50"
+          className="flex w-full items-center justify-center gap-2 rounded-md bg-amber px-5 py-2.5 font-mono text-xs font-semibold tracking-[0.12em] text-[#140b0e] transition-transform hover:scale-[1.02] disabled:opacity-50"
         >
           {busy ? (
             <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
