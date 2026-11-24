@@ -543,7 +543,7 @@ export default async function Dashboard({
                       <p className="mt-0.5 font-mono text-[11px] text-amber">
                         {m.name} · {m.email}
                       </p>
-                      <p className="mt-1.5 line-clamp-2 text-xs text-cream/75">{m.message}</p>
+                      <p className="mt-1.5 whitespace-pre-wrap break-words text-xs leading-relaxed text-cream/85">{m.message}</p>
                       <a
                         href={`mailto:${m.email}`}
                         className="mt-2 inline-block font-mono text-[11px] font-semibold text-amber hover:underline"
