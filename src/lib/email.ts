@@ -39,15 +39,52 @@ export type DigestOpts = { total?: number; extra?: DigestExtra };
 export type SendStatus = "sent" | "dry_run" | "error";
 
 export function digestSubject(evts: FilingEvent[], total?: number): string {
+  const shown = Math.min(15, evts.length);
+  const fullTotal = Math.max(total ?? 0, evts.length);
   const states = Array.from(new Set(evts.map((e) => stateFullName(e.state)))).join(" + ");
-  if (total && total > evts.length) {
-    return `Top ${evts.length} of ${total} new filings — ${states}`;
+  if (fullTotal > shown) {
+    return `Top ${shown} of ${fullTotal} new filings — ${states}`;
   }
-  return `${evts.length} new filing${evts.length === 1 ? "" : "s"} — ${states}`;
+  return `${shown} new filing${shown === 1 ? "" : "s"} — ${states}`;
 }
 
 function esc(s: string | null | undefined): string {
   return (s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function formatCleanAddress(
+  address: string | null | undefined,
+  neighborhood: string | null | undefined,
+  city: string | null | undefined,
+  state: string | null | undefined,
+  zip: string | null | undefined
+): string {
+  const parts: string[] = [];
+  const rawAddr = (address ?? "").trim();
+  const lower = rawAddr.toLowerCase();
+  if (rawAddr) parts.push(rawAddr);
+  if (neighborhood && !lower.includes(neighborhood.toLowerCase())) parts.push(neighborhood.trim());
+  if (city && !lower.includes(city.toLowerCase())) parts.push(city.trim());
+  if (state && !new RegExp(`\\b${state.trim().toLowerCase()}\\b`).test(lower)) {
+    parts.push(state.trim());
+  }
+  if (zip && !lower.includes(zip.trim().toLowerCase())) parts.push(zip.trim());
+  return parts.join(", ");
+}
+
+function emailBrandHeader(subtitle: string): string {
+  const logoSrc = `${siteUrl()}/brand-logo.png`;
+  return `<table role="presentation" style="width:100%;border-collapse:collapse;margin-bottom:16px">
+    <tr>
+      <td style="width:46px;vertical-align:middle;padding-right:12px">
+        <img src="${logoSrc}" alt="${esc(BRAND.name)}" width="40" height="40" style="display:block;width:40px;height:40px;border-radius:10px;border:1px solid #e9a13b66;object-fit:cover" />
+      </td>
+      <td style="vertical-align:middle">
+        <div style="font-size:12px;letter-spacing:0.22em;color:#e9a13b;text-transform:uppercase;font-family:monospace;font-weight:700">${esc(BRAND.name)}</div>
+        <div style="font-size:10px;letter-spacing:0.18em;color:#988689;text-transform:uppercase;font-family:monospace;margin-top:2px">${esc(subtitle)}</div>
+      </td>
+    </tr>
+  </table>`;
 }
 
 const HOT_TYPES = [
@@ -83,9 +120,7 @@ export function digestHtml(
   opts: DigestOpts = {}
 ): string {
   const unsubscribe = unsubscribeUrls(sub.email);
-  const visible = evts.slice(0, 60);
-
-  const scored = visible.map((e) => ({
+  const scored = evts.map((e) => ({
     e,
     score: scoreFiling({
       eventType: e.eventType,
@@ -96,8 +131,12 @@ export function digestHtml(
       summary: e.summary,
     }),
   }));
-  const ranked = [...scored].sort((a, b) => b.score.value - a.score.value);
+  const rankedAll = [...scored].sort((a, b) => b.score.value - a.score.value);
+  // Cap email body to Top 15 priority cards so Gmail never clips >102KB and reps scan fast.
+  const ranked = rankedAll.slice(0, 15);
   const top = ranked[0];
+  const totalCount = Math.max(opts.total ?? 0, evts.length);
+  const remainingCount = Math.max(0, totalCount - ranked.length);
   const hotCount = scored.filter((s) => s.score.tier === "A" || isHot(s.e)).length;
 
   const rows = ranked
@@ -115,7 +154,7 @@ export function digestHtml(
             day: "numeric",
           })
         : "";
-      const scoreChip = `<span style="display:inline-block;margin-left:6px;background:${hot ? "#e9a13b22" : "#3a222a55"};border:1px solid ${hot ? "#e9a13b55" : "#3a222a"};color:${hot ? "#e9a13b" : "#bdb0ad"};font-size:10px;font-weight:700;padding:1px 6px;border-radius:999px;letter-spacing:0.06em">${score.value}</span>`;
+      const scoreChip = `&nbsp;<span style="display:inline-block;background:${hot ? "#e9a13b22" : "#3a222a55"};border:1px solid ${hot ? "#e9a13b55" : "#3a222a"};color:${hot ? "#e9a13b" : "#bdb0ad"};font-size:10px;font-weight:700;padding:1px 6px;border-radius:999px;letter-spacing:0.06em">${score.value}</span>`;
       const info = e.licenseKey ? opts.extra?.get(`${e.state}|${e.licenseKey}`) : undefined;
       const meta = parseEventMeta(e.payload);
       const address = info?.address ?? meta.address ?? null;
@@ -153,9 +192,10 @@ export function digestHtml(
         .map((x) => esc(x))
         .join(" · ");
 
-      const fullAddr = [address, neighborhood, e.city, e.state, zip]
-        .filter(Boolean)
-        .join(", ");
+      const fullAddr = formatCleanAddress(address, neighborhood, e.city, e.state, zip);
+      const mapHref = fullAddr
+        ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(fullAddr)}`
+        : null;
 
       const revBadge =
         info?.monthlyRevenue && info.monthlyRevenue > 0
@@ -166,12 +206,13 @@ export function digestHtml(
       return `<tr>
         <td style="padding:14px 8px;border-bottom:1px solid #2a2318;color:#988689;font-size:11px;white-space:nowrap;vertical-align:top;font-family:monospace">${esc(when)}<br/>${badge}${scoreChip}</td>
         <td style="padding:14px 8px;border-bottom:1px solid #2a2318;vertical-align:top">
-          <a href="${unlockHref}" style="color:#f6eee1;font-size:15px;font-family:Georgia,serif;font-weight:600;text-decoration:none">${esc(venueTitle)}</a>
-          <span style="color:#988689;font-size:11px;font-family:monospace;margin-left:6px">${esc(e.state)}</span>
-          ${fullAddr ? `<div style="margin-top:3px;color:#d6c7ba;font-size:12px;font-family:Arial,sans-serif">📍 ${esc(fullAddr)}</div>` : ""}
+          <div>
+            <a href="${unlockHref}" style="color:#f6eee1;font-size:15px;font-family:Georgia,serif;font-weight:600;text-decoration:none">${esc(venueTitle)}</a>
+            &nbsp;<span style="display:inline-block;border:1px solid #3a222a;background:#1b1115;color:#c9b8b4;font-size:10px;font-family:monospace;padding:1px 5px;border-radius:4px">${esc(e.state)}</span>
+          </div>
+          ${fullAddr && mapHref ? `<div style="margin-top:4px;font-size:12px;font-family:Arial,sans-serif"><a href="${mapHref}" style="color:#d6c7ba;text-decoration:none">📍 ${esc(fullAddr)}</a></div>` : ""}
           ${contactLine ? `<div style="margin-top:3px;color:#e9a13b;font-size:11px;font-family:Arial,sans-serif">${contactLine}</div>` : ""}
           <div style="margin-top:4px;color:#bdb0ad;font-size:11px;font-family:Arial,sans-serif"><strong>${esc(dossier.archetype)}</strong> · ${esc(info?.typeName ?? e.typeName ?? "Alcohol License")}</div>
-          <div style="margin-top:2px;color:#988689;font-size:11px;font-family:Arial,sans-serif">Pitch: ${esc(dossier.beverageProgram)}</div>
           ${revBadge}
           <div style="margin-top:7px;font-family:monospace;font-size:10px">
             <a href="${unlockHref}" style="color:#e9a13b;text-decoration:none;font-weight:700">OPEN DOSSIER &amp; SCRIPT →</a>
@@ -206,9 +247,13 @@ export function digestHtml(
           typeName: info?.typeName ?? top.e.typeName,
           occurredAt: top.e.occurredAt,
         });
-        const topAddr = [info?.address ?? meta.address, top.e.city, top.e.state, info?.zip ?? meta.zip]
-          .filter(Boolean)
-          .join(", ");
+        const topAddr = formatCleanAddress(
+          info?.address ?? meta.address,
+          null,
+          top.e.city,
+          top.e.state,
+          info?.zip ?? meta.zip
+        );
         return `<div style="margin:0 0 24px;padding:18px;border:1px solid #e9a13b66;background:#2a141b;border-radius:12px">
         <div style="font-family:monospace;font-size:10px;letter-spacing:0.2em;color:#e9a13b">★ CALL THIS ONE FIRST — SCORE ${top.score.value}/100 · ${esc(topDossier.estAnnualSpend.toUpperCase())}</div>
         <div style="margin-top:8px;font-family:Georgia,serif;font-size:19px;color:#f6eee1"><a href="${filingUnlockUrl(top.e.id, sub.email)}" style="color:#f6eee1;text-decoration:none">${esc(top.e.tradeName ?? top.e.ownerName ?? "New Venue")}</a></div>
@@ -232,12 +277,23 @@ export function digestHtml(
 
   const firstState = (sub.states.split(",")[0] ?? "TX").trim().toUpperCase();
   const mapRouteHref = `${siteUrl()}/map?state=${encodeURIComponent(firstState)}&email=${encodeURIComponent(sub.email)}&token=${encodeURIComponent(scopedToken(sub.email, "unlock"))}`;
+  const moreBanner =
+    remainingCount > 0
+      ? `<div style="margin:22px 0 0;padding:16px;border:1px solid #3a222a;background:#180f12;border-radius:10px;text-align:center;font-family:monospace;font-size:11px;color:#c9bfae">
+          Showing top <strong style="color:#f6eee1">${ranked.length}</strong> priority accounts of <strong style="color:#e9a13b">${totalCount.toLocaleString()}</strong> new filings in your territories.
+          <div style="margin-top:10px">
+            <a href="${mapRouteHref}" style="background:#e9a13b;color:#140b0e;padding:7px 14px;border-radius:6px;text-decoration:none;font-weight:700;display:inline-block">OPEN ALL ${totalCount.toLocaleString()} ON TERRITORY MAP →</a>
+            &nbsp;&nbsp;
+            <a href="${exportUrl(sub.email)}" style="color:#e9a13b;text-decoration:none;font-weight:700">DOWNLOAD FULL CSV ↓</a>
+          </div>
+        </div>`
+      : "";
 
   return `<!doctype html><html><body style="margin:0;background:#0b0906;color:#f2ead9;font-family:Georgia,serif">
   <div style="max-width:640px;margin:0 auto;padding:32px 20px">
-    <div style="font-size:11px;letter-spacing:0.25em;color:#e9a13b;text-transform:uppercase;font-family:monospace">${esc(BRAND.name)} · New-Filing Digest</div>
-    <h1 style="font-size:28px;margin:12px 0 4px;font-weight:600">${opts.total && opts.total > evts.length ? `Top ${evts.length} of ${opts.total} new filings` : `${evts.length} new filing${evts.length === 1 ? "" : "s"}`} in your territories</h1>
-    <p style="color:#8d8375;font-size:13px;margin:0 0 14px">${hotCount > 0 ? `<strong style="color:#e9a13b">${hotCount} are priority leads</strong> — scored and ranked so you know who to call first.` : "Applications filed = buyers deciding in the next 60–90 days. Call first."}</p>
+    ${emailBrandHeader("Morning Intelligence Dossier")}
+    <h1 style="font-size:26px;margin:4px 0 6px;font-weight:600">${remainingCount > 0 ? `Top ${ranked.length} of ${totalCount.toLocaleString()} new filings` : `${totalCount} new filing${totalCount === 1 ? "" : "s"}`} in your territories</h1>
+    <p style="color:#8d8375;font-size:13px;margin:0 0 14px">${hotCount > 0 ? `<strong style="color:#e9a13b">${hotCount} priority leads</strong> — scored and ranked so you call highest-value accounts first.` : "Applications filed = buyers deciding in the next 60–90 days. Call first."}</p>
     <div style="margin:0 0 20px;font-family:monospace;font-size:11px">
       <a href="${mapRouteHref}" style="background:#2a141b;border:1px solid #e9a13b66;color:#e9a13b;padding:8px 14px;border-radius:8px;text-decoration:none;font-weight:700;display:inline-block">📍 OPEN TERRITORY MAP + GOOGLE MAPS ROUTE PLANNER →</a>
     </div>
@@ -249,6 +305,7 @@ export function digestHtml(
       </tr>
       ${rows}
     </table>
+    ${moreBanner}
     <p style="color:#8d8375;font-size:11px;margin-top:24px;line-height:1.7;font-family:monospace">
       You are receiving this service email because ${esc(sub.email)} is subscribed to: ${esc(formatStateNames(sub.states))}.<br />
       <a href="${prefsUrl(sub.email)}" style="color:#e9a13b">Change ZIP codes &amp; lead types</a> ·
@@ -294,7 +351,7 @@ export async function sendTrialStarted(input: {
       },
       html: `<!doctype html><html><body style="margin:0;background:#0b0906;color:#f2ead9;font-family:Arial,sans-serif">
         <div style="max-width:620px;margin:auto;padding:36px 20px">
-          <p style="color:#e9a13b;font-size:11px;letter-spacing:3px;text-transform:uppercase;font-family:monospace">${esc(BRAND.name)} · 7-DAY FREE TRIAL</p>
+          ${emailBrandHeader("7-Day Free Trial")}
           <h1 style="font-family:Georgia,serif;font-size:30px;margin:12px 0">You are on the watch.</h1>
           <p style="color:#c9bfae;line-height:1.7">Your 7-day free trial (no card required) is active for <strong style="color:#fff">${esc(prettyStates)}</strong>. Your first morning digest arrives after the next daily registry sweep.</p>
           <p style="color:#c9bfae;line-height:1.7">Shape your feed now — filter by ZIP code, city, venue type, or connect Slack/Discord alerts:</p>

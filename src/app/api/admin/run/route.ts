@@ -90,6 +90,17 @@ export async function POST(req: Request) {
     return Response.json({ ok: true, tier, ...agg });
   }
 
+  if (action === "sync_all") {
+    await ensureSchema();
+    const reprobed = await reprobeAndHealPaused(false).catch(() => []);
+    const agg = await runAllSources(false, {
+      tier: "all",
+      budgetMs: 44_000,
+      concurrency: 5,
+    });
+    return Response.json({ ok: true, healed: reprobed.length, ...agg });
+  }
+
   if (action === "pourwatch") {
     await ensureSchema();
     const reprobed = await reprobeAndHealPaused(true);

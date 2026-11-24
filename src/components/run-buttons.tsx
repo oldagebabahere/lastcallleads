@@ -1,13 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { LoaderCircle, Play, RefreshCcw, ShieldCheck } from "lucide-react";
+import { LoaderCircle, Mail, Play, Send, ShieldCheck, Sparkles } from "lucide-react";
 
-// Manual control room actions — all 18 live retail sources across 9 markets
-// run cleanly inside Vercel Hobby (no GitHub Actions needed).
+// Ultra-clean 5-button Executive Command Bar for the Owner Control Room.
 export default function RunButtons({ adminKey }: { adminKey: string }) {
   const [busy, setBusy] = useState<string | null>(null);
-  const [log, setLog] = useState<string>("");
+  const [status, setStatus] = useState<{ ok: boolean; title: string; summary: string } | null>(null);
+  const [rawJson, setRawJson] = useState<string>("");
 
   async function run(
     label: string,
@@ -15,14 +15,14 @@ export default function RunButtons({ adminKey }: { adminKey: string }) {
       action: string;
       state?: string;
       tier?: "fast" | "heavy" | "all";
-      force?: boolean;
       dryRun?: boolean;
       limit?: number;
     }
   ) {
     if (busy) return;
     setBusy(label);
-    setLog(`Running: ${label}…`);
+    setStatus(null);
+    setRawJson("");
     try {
       const res = await fetch("/api/admin/run", {
         method: "POST",
@@ -32,127 +32,126 @@ export default function RunButtons({ adminKey }: { adminKey: string }) {
         },
         body: JSON.stringify(payload),
       });
-      const data = await res.json();
-      setLog(JSON.stringify(data, null, 2));
-      window.setTimeout(
-        () => window.location.reload(),
-        payload.action === "ingest" ? 2800 : 2000
-      );
+      const data = (await res.json()) as Record<string, unknown>;
+      setRawJson(JSON.stringify(data, null, 2));
+
+      let summary = data.ok ? "Completed successfully." : String(data.error ?? "Action returned warning.");
+      if (payload.action === "sync_all" && Array.isArray(data.results)) {
+        const okN = data.results.filter((r: { ok?: boolean }) => r.ok).length;
+        const newEv = data.results.reduce(
+          (a: number, r: { newEvents?: number }) => a + Number(r.newEvents ?? 0),
+          0
+        );
+        summary = `${okN}/${data.results.length} feeds synced · +${newEv.toLocaleString()} new filings captured.`;
+      } else if (payload.action === "outreach" && data.report && typeof data.report === "object") {
+        const rep = data.report as Record<string, unknown>;
+        summary = `${rep.stateName ?? rep.state}: ${rep.sent ?? 0} sent, ${rep.followupsSent ?? 0} follow-ups${rep.reason ? ` (${rep.reason})` : ""}.`;
+      } else if (payload.action === "maintenance") {
+        summary = `Purged ${Number(data.prunedLegacyRows ?? 0).toLocaleString()} legacy rows · DB size: ${data.dbMb ?? "—"} MB.`;
+      } else if (payload.action === "test_telegram") {
+        summary = data.ok
+          ? "Telegram ping sent! Check your phone."
+          : `Telegram error: ${String(data.detail ?? "check token/chat id")}`;
+      } else if (payload.action === "digest" && data.report && typeof data.report === "object") {
+        const rep = data.report as Record<string, unknown>;
+        summary = `Digests processed: ${rep.sent ?? 0} sent · ${rep.skipped ?? 0} skipped.`;
+      }
+
+      setStatus({ ok: Boolean(data.ok), title: label, summary });
+      if (payload.action === "sync_all" || payload.action === "maintenance" || payload.action === "digest") {
+        window.setTimeout(() => window.location.reload(), 2400);
+      }
     } catch (err) {
-      setLog(`Request failed: ${err instanceof Error ? err.message : String(err)}`);
+      setStatus({
+        ok: false,
+        title: label,
+        summary: err instanceof Error ? err.message : String(err),
+      });
     } finally {
       setBusy(null);
     }
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap gap-2.5">
-        <Btn
-          label="Pull All 9 Markets"
+    <div className="space-y-3">
+      <div className="flex flex-wrap gap-2">
+        <ActionBtn
+          label="Sync All 9 States"
           busy={busy}
-          onClick={() => run("Pull All 9 Markets", { action: "ingest", tier: "all" })}
+          primary
+          icon={<Play className="h-3.5 w-3.5" />}
+          onClick={() => run("Sync All 9 States", { action: "sync_all" })}
         />
-        <Btn
-          label="Texas only"
+        <ActionBtn
+          label="Send 3 Outreach"
           busy={busy}
-          onClick={() => run("Texas only", { action: "ingest", state: "TX" })}
-          secondary
+          icon={<Sparkles className="h-3.5 w-3.5" />}
+          onClick={() => run("Send 3 Outreach", { action: "outreach", dryRun: false, limit: 3 })}
         />
-        <Btn
-          label="New York only"
-          busy={busy}
-          onClick={() => run("New York only", { action: "ingest", state: "NY" })}
-          secondary
-        />
-        <Btn
-          label="California only"
-          busy={busy}
-          onClick={() => run("California only", { action: "ingest", state: "CA" })}
-          secondary
-        />
-        <Btn
-          label="PourWatch Self-Heal"
-          busy={busy}
-          onClick={() => run("PourWatch Self-Heal", { action: "pourwatch" })}
-          secondary
-          heal
-        />
-        <Btn
-          label="TX Receipts"
-          busy={busy}
-          onClick={() => run("TX Receipts", { action: "receipts" })}
-          secondary
-        />
-        <Btn
+        <ActionBtn
           label="Send Digests"
           busy={busy}
+          icon={<Mail className="h-3.5 w-3.5" />}
           onClick={() => run("Send Digests", { action: "digest" })}
-          secondary
         />
-        <Btn
-          label="Weekly Briefings"
-          busy={busy}
-          onClick={() => run("Weekly Briefings", { action: "briefings" })}
-          secondary
-        />
-        <Btn
-          label="Monthly Recaps"
-          busy={busy}
-          onClick={() => run("Monthly Recaps", { action: "monthly_recaps" })}
-          secondary
-        />
-        <Btn
-          label="Outreach Dry-Run"
-          busy={busy}
-          onClick={() => run("Outreach Dry-Run", { action: "outreach", dryRun: true, limit: 3 })}
-          secondary
-        />
-        <Btn
-          label="Send Outreach (3 Live)"
-          busy={busy}
-          onClick={() => run("Send Outreach (3 Live)", { action: "outreach", dryRun: false, limit: 3 })}
-          secondary
-        />
-        <Btn
-          label="Clean Legacy DB"
-          busy={busy}
-          onClick={() => run("Clean Legacy DB", { action: "maintenance" })}
-          secondary
-          heal
-        />
-        <Btn
+        <ActionBtn
           label="Test Telegram"
           busy={busy}
+          icon={<Send className="h-3.5 w-3.5" />}
           onClick={() => run("Test Telegram", { action: "test_telegram" })}
-          secondary
+        />
+        <ActionBtn
+          label="Clean DB"
+          busy={busy}
+          icon={<ShieldCheck className="h-3.5 w-3.5" />}
+          onClick={() => run("Clean DB", { action: "maintenance" })}
         />
       </div>
-      <p className="font-mono text-xs leading-relaxed tracking-[0.1em] text-smoke">
-        NOTE: Vercel Cron runs daily automation automatically at 11:00 UTC (zero GitHub Actions
-        needed). Manual runs are idempotent — duplicate filings are never created.
-      </p>
-      {log && (
-        <pre className="max-h-72 overflow-auto rounded-lg border border-line bg-ink p-4 font-mono text-xs leading-relaxed text-cream/80">
-          {log}
-        </pre>
+
+      {status && (
+        <div
+          className={`rounded-lg border px-4 py-3 text-sm ${
+            status.ok
+              ? "border-leaf/40 bg-leaf/10 text-cream"
+              : "border-amber/40 bg-amber/10 text-cream"
+          }`}
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p>
+              <span className="font-mono text-xs font-bold tracking-[0.12em] text-amber">
+                {status.title.toUpperCase()}:
+              </span>{" "}
+              {status.summary}
+            </p>
+          </div>
+          {rawJson && (
+            <details className="mt-2">
+              <summary className="cursor-pointer font-mono text-[11px] text-smoke hover:text-cream">
+                Show raw JSON
+              </summary>
+              <pre className="mt-2 max-h-56 overflow-auto rounded border border-line bg-ink p-3 font-mono text-[11px] leading-relaxed text-cream/75">
+                {rawJson}
+              </pre>
+            </details>
+          )}
+        </div>
       )}
     </div>
   );
 }
 
-function Btn({
+function ActionBtn({
   label,
   busy,
+  primary,
+  icon,
   onClick,
-  secondary,
-  heal,
 }: {
   label: string;
   busy: string | null;
+  primary?: boolean;
+  icon: React.ReactNode;
   onClick: () => void;
-  secondary?: boolean;
-  heal?: boolean;
 }) {
   const isBusy = busy === label;
   return (
@@ -160,21 +159,13 @@ function Btn({
       type="button"
       onClick={onClick}
       disabled={busy !== null}
-      className={`flex items-center gap-2 rounded-md px-4 py-2.5 font-mono text-xs font-semibold tracking-[0.12em] transition-all disabled:opacity-50 ${
-        secondary
-          ? "border border-line text-cream/80 hover:border-amber/60 hover:text-amber"
-          : "bg-amber text-[#140b0e] hover:scale-[1.03]"
+      className={`inline-flex items-center gap-2 rounded-lg px-4 py-2.5 font-mono text-xs font-semibold tracking-[0.1em] transition-all disabled:opacity-50 ${
+        primary
+          ? "bg-amber text-[#140b0e] hover:brightness-110"
+          : "border border-line bg-ink text-cream/85 hover:border-amber/60 hover:text-amber"
       }`}
     >
-      {isBusy ? (
-        <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-      ) : heal ? (
-        <ShieldCheck className="h-3.5 w-3.5" />
-      ) : secondary ? (
-        <RefreshCcw className="h-3.5 w-3.5" />
-      ) : (
-        <Play className="h-3.5 w-3.5" />
-      )}
+      {isBusy ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : icon}
       {label.toUpperCase()}
     </button>
   );
