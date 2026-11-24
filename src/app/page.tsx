@@ -1,10 +1,15 @@
 import Link from "next/link";
-import { ArrowRight, ChevronDown, MapPin } from "lucide-react";
+import { ArrowRight, ChevronDown, Flame, MapPin, ShieldCheck, Sparkles } from "lucide-react";
+import { sql } from "drizzle-orm";
+import { db } from "@/db";
+import { ensureSchema } from "@/db/bootstrap";
+import { licenses } from "@/db/schema";
 import Reveal from "@/components/reveal";
 import RoiCalculator from "@/components/roi-calculator";
 import SubscribeForm from "@/components/subscribe-form";
 import CountUp from "@/components/count-up";
 import BottleStage from "@/components/bottle-stage";
+import { LogoMark } from "@/components/logo";
 import { Footer, LeadRow, Nav } from "@/components/ui";
 import { embargoCutoff, getRecentEvents, getSiteStats, maskName } from "@/lib/queries";
 import {
@@ -98,7 +103,19 @@ const PLACEHOLDER_EVENTS: PlaceholderEvent[] = [
 ];
 
 export default async function Home() {
-  const [stats, recent] = await Promise.all([getSiteStats(), getRecentEvents(10)]);
+  const [stats, recent, stateCounts] = await Promise.all([
+    getSiteStats(),
+    getRecentEvents(10),
+    ensureSchema()
+      .then(() =>
+        db
+          .select({ state: licenses.state, n: sql<number>`count(*)::int` })
+          .from(licenses)
+          .groupBy(licenses.state)
+      )
+      .catch(() => [] as { state: string; n: number }[]),
+  ]);
+  const countByState = new Map(stateCounts.map((r) => [r.state, r.n]));
   const cut = embargoCutoff();
 
   const isRowLocked = (occurredAt: Date | null) =>
@@ -221,58 +238,61 @@ export default async function Home() {
         </div>
 
         <div
-          className="parallax parallax-soft pointer-events-none relative z-20 select-none text-center"
+          className="parallax parallax-soft pointer-events-none relative z-20 mt-4 select-none text-center lg:mt-0"
           aria-hidden="true"
         >
-          <p className="hero-giant text-[16vw] sm:text-[12.5vw] lg:text-[10rem]">NEW BARS</p>
-          <p className="hero-giant stroke text-[16vw] sm:text-[12.5vw] lg:text-[10rem]">BEFORE THEY</p>
-          <p className="hero-giant text-[16vw] sm:text-[12.5vw] lg:text-[10rem]">
+          <p className="hero-giant text-[15vw] sm:text-[11.5vw] lg:text-[8.6rem]">NEW BARS</p>
+          <p className="hero-giant stroke text-[15vw] sm:text-[11.5vw] lg:text-[8.6rem]">BEFORE THEY</p>
+          <p className="hero-giant text-[15vw] sm:text-[11.5vw] lg:text-[8.6rem]">
             OPEN<span className="text-wine2">.</span>
           </p>
         </div>
 
-        <div className="relative z-30 mx-auto mt-auto max-w-2xl text-center">
-          <p
-            className="hero-fade font-mono text-[10px] tracking-[0.3em] text-inkread/70 sm:text-[11px]"
-            style={{ animationDelay: "150ms" }}
+        <div className="relative z-30 mx-auto mt-10 max-w-2xl text-center lg:mt-20">
+          <div
+            className="hero-fade mx-auto mb-4 inline-flex items-center gap-2.5 rounded-full border border-wine2/25 bg-white/75 px-4 py-1.5 shadow-sm backdrop-blur-md"
+            style={{ animationDelay: "120ms" }}
           >
-            <span className="text-wine2">●</span>&nbsp;&nbsp;BEVERAGE SALES INTELLIGENCE&nbsp;&nbsp;·&nbsp;&nbsp;
-            {LIVE_MARKETS.length} VERIFIED RETAIL MARKETS
-          </p>
-          <p
-            className="hero-fade mx-auto mt-5 max-w-xl text-lg leading-relaxed text-inkread/80"
-            style={{ animationDelay: "350ms" }}
-          >
-            A bar files its alcohol permit{" "}
-            <span className="font-semibold text-inkread">60–90 days before first pour</span>. Every
-            morning we send you the new filings in your territory — with{" "}
-            <span className="font-semibold text-inkread">
-              street address, LLC entity, beverage program fit &amp; 1-click owner lookup
+            <LogoMark className="h-5 w-5 rounded-full border border-amber/60" />
+            <span className="font-mono text-[10px] font-semibold tracking-[0.2em] text-inkread/85">
+              INSTITUTIONAL BEVERAGE INTEL · {LIVE_MARKETS.length} VERIFIED US MARKETS
             </span>
-            .
+          </div>
+          <p
+            className="hero-fade mx-auto max-w-xl text-base leading-relaxed text-inkread/85 sm:text-lg"
+            style={{ animationDelay: "300ms" }}
+          >
+            Every bar files its alcohol permit{" "}
+            <span className="font-semibold text-inkread">60–90 days before first pour</span>. At
+            7:00 AM daily, we deliver the exact{" "}
+            <span className="font-semibold text-inkread">
+              street address, LLC entity, estimated alcohol spend &amp; 1-click Google Maps route
+            </span>{" "}
+            before competitors know they exist.
           </p>
           <div
-            className="hero-fade mt-8 flex flex-wrap items-center justify-center gap-4"
-            style={{ animationDelay: "550ms" }}
+            className="hero-fade mt-7 flex flex-wrap items-center justify-center gap-3.5"
+            style={{ animationDelay: "480ms" }}
           >
             <Link href="#act-allocation" className="btn-mint magnetic px-8 py-4 text-sm">
-              Start 7-day free trial
+              Claim Your Territory — 7-Day Free Trial
               <ArrowRight className="h-4 w-4" />
             </Link>
-            <Link href="/sample" className="btn-ghost-ink px-8 py-4 text-sm">
-              See a live beverage dossier
+            <Link href="/map" className="btn-ghost-ink px-6 py-4 text-sm">
+              <MapPin className="h-4 w-4 text-wine2" />
+              Live Territory Map
             </Link>
           </div>
+          <p
+            className="hero-fade mt-4 font-mono text-[10px] tracking-[0.16em] text-inkread/60"
+            style={{ animationDelay: "620ms" }}
+          >
+            $0 TODAY · NO CREDIT CARD · CAPPED AT 5 TERRITORY SEATS PER STATE
+          </p>
         </div>
 
         <span
-          className="hero-rail absolute bottom-40 left-6 hidden md:block"
-          aria-hidden="true"
-        >
-          STREET ADDRESS · LLC · BEVERAGE FIT · CRM CSV
-        </span>
-        <span
-          className="hero-rail absolute bottom-40 right-6 hidden md:block"
+          className="hero-rail absolute bottom-16 right-6 hidden md:block"
           aria-hidden="true"
         >
           9 VERIFIED MARKETS · SWEPT DAILY
@@ -303,6 +323,25 @@ export default async function Home() {
               </span>
             ))}
           </div>
+        </div>
+      </section>
+
+      {/* ================= INSTITUTIONAL AUTHORITY STRIP ================= */}
+      <section className="relative z-30 border-b border-cream/10 bg-ox-ink px-5 py-5 text-cream">
+        <div className="mx-auto grid max-w-6xl grid-cols-2 gap-4 text-center sm:grid-cols-4">
+          {[
+            ["18 OFFICIAL GOV FEEDS", "Swept live every morning"],
+            ["MAX 5 SEATS / STATE", "Strict territory cap to protect edge"],
+            ["19-COLUMN CRM + SLACK", "HubSpot CSV, .vcf contact & webhook"],
+            ["0% SHARED AUCTIONS", "Direct public-record intelligence"],
+          ].map(([head, sub]) => (
+            <div key={head} className="px-2">
+              <p className="font-mono text-[10px] font-semibold tracking-[0.18em] text-amber">
+                {head}
+              </p>
+              <p className="mt-0.5 text-xs text-smoke">{sub}</p>
+            </div>
+          ))}
         </div>
       </section>
 
@@ -618,6 +657,114 @@ export default async function Home() {
         <p className="relative mt-10 text-center font-mono text-[11px] leading-relaxed tracking-[0.1em] text-inkread/50">
           NO CONTRACT · CANCEL ANYTIME · IF THE MORNING DOSSIER DOESN&apos;T PAY FOR ITSELF, DON&apos;T RENEW
         </p>
+      </section>
+
+      {/* ================= POST-DOCK — AGENCY DOSSIER PREVIEW + TERRITORY SCARCITY MATRIX ================= */}
+      <section className="mx-auto max-w-6xl px-5 pt-16">
+        <Reveal>
+          <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+            {/* Left: Institutional 7:00 AM Dossier Preview */}
+            <div className="rounded-2xl border border-amber/30 bg-ox-ink p-7 text-cream shadow-[0_30px_80px_-35px_rgba(30,6,14,0.85)] sm:p-8">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-cream/10 pb-4">
+                <span className="inline-flex items-center gap-2 font-mono text-[10px] font-semibold tracking-[0.2em] text-amber">
+                  <Sparkles className="h-3.5 w-3.5" /> 7:00 AM MORNING DOSSIER PREVIEW
+                </span>
+                <span className="rounded-full border border-mint/40 bg-mint/15 px-2.5 py-0.5 font-mono text-[10px] font-semibold text-mint-bright">
+                  SCORE 94 · PRIORITY A
+                </span>
+              </div>
+
+              <div className="mt-5">
+                <p className="font-mono text-[10px] tracking-[0.18em] text-smoke">
+                  FILED THIS MORNING · TEXAS TABC · MIXED BEVERAGE + LATE HOURS
+                </p>
+                <h3 className="mt-2 font-display text-2xl font-medium text-cream sm:text-3xl">
+                  La Llorona Cantina
+                </h3>
+                <p className="mt-1 font-mono text-xs text-amber">
+                  Entity: La Llorona Hospitality LLC · 19128 W Little York Rd, Katy, TX 77449
+                </p>
+              </div>
+
+              <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                <div className="rounded-lg border border-cream/10 bg-panel p-3.5">
+                  <p className="font-mono text-[9px] tracking-[0.18em] text-faint">
+                    EST. WHOLESALE SPEND
+                  </p>
+                  <p className="mt-1 font-display text-lg font-medium text-cream">
+                    $220K–$500K / year
+                  </p>
+                </div>
+                <div className="rounded-lg border border-cream/10 bg-panel p-3.5">
+                  <p className="font-mono text-[9px] tracking-[0.18em] text-faint">
+                    EST. OPENING WINDOW
+                  </p>
+                  <p className="mt-1 font-display text-lg font-medium text-mint-bright">
+                    ~60 Days · Pitch Now
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-5 flex flex-wrap gap-2 font-mono text-[10px] tracking-[0.1em]">
+                {[
+                  "Google Maps Multi-Stop Route",
+                  "Street View Check",
+                  "LinkedIn + Instagram Finder",
+                  "1-Tap Phone Contact (.vcf)",
+                  "7-Day Calendar Alarm",
+                  "Slack / CRM Webhook",
+                ].map((chip) => (
+                  <span
+                    key={chip}
+                    className="rounded-md border border-cream/15 bg-panel2/80 px-2.5 py-1 text-cream/85"
+                  >
+                    ✓ {chip}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            {/* Right: 9-Market Territory Seat Cap Matrix (Real Scarcity FOMO) */}
+            <div className="rounded-2xl border border-inkread/15 bg-creamcard/90 p-7 text-inkread shadow-[0_24px_70px_-35px_rgba(36,16,22,0.45)] sm:p-8">
+              <div className="flex items-center justify-between gap-2 border-b border-inkread/15 pb-4">
+                <span className="inline-flex items-center gap-2 font-mono text-[10px] font-semibold tracking-[0.2em] text-wine2">
+                  <Flame className="h-3.5 w-3.5" /> TERRITORY SEAT ALLOCATION
+                </span>
+                <span className="inline-flex items-center gap-1 font-mono text-[10px] font-semibold text-inkread/70">
+                  <ShieldCheck className="h-3.5 w-3.5 text-wine2" /> MAX 5 / STATE
+                </span>
+              </div>
+              <p className="mt-3 text-xs leading-relaxed text-inkread/75">
+                We cap every state at <strong>5 active distributor seats</strong> so your territory
+                never gets crowded with competing reps calling the same new bar.
+              </p>
+              <div className="mt-4 divide-y divide-inkread/10">
+                {LIVE_MARKETS.map((m) => {
+                  const n = countByState.get(m.code) ?? 0;
+                  return (
+                    <div
+                      key={m.code}
+                      className="flex items-center justify-between gap-2 py-2 text-xs"
+                    >
+                      <div className="min-w-0">
+                        <span className="font-semibold text-inkread">{m.name}</span>
+                        <span className="ml-2 font-mono text-[10px] text-inkread/55">
+                          {n > 0 ? `${n.toLocaleString()} records` : m.agency}
+                        </span>
+                      </div>
+                      <a
+                        href="#act-allocation"
+                        className="shrink-0 rounded-full border border-wine2/35 bg-wine2/10 px-2.5 py-0.5 font-mono text-[9px] font-semibold tracking-[0.12em] text-wine2 transition-colors hover:bg-wine2 hover:text-cream"
+                      >
+                        CLAIM SEAT →
+                      </a>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </Reveal>
       </section>
 
       {/* ================= POST-DOCK — PROOF ================= */}

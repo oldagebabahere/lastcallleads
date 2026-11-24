@@ -362,7 +362,7 @@ export default function BottleStage() {
       <div
         ref={tiltRef}
         aria-hidden="true"
-        className="pointer-events-none fixed left-1/2 top-1/2 z-40 hidden -translate-x-1/2 -translate-y-1/2 will-change-transform lg:block"
+        className="pointer-events-none fixed left-1/2 top-[43%] z-40 hidden -translate-x-1/2 -translate-y-1/2 will-change-transform lg:block"
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
@@ -373,7 +373,7 @@ export default function BottleStage() {
           height={1200}
           draggable={false}
           onLoad={() => ScrollTrigger.refresh()}
-          className="bottle-fixed h-[54vh] max-h-[540px] min-h-[300px] w-auto select-none will-change-transform"
+          className="bottle-fixed h-[44vh] max-h-[430px] min-h-[260px] w-auto select-none will-change-transform"
         />
       </div>
 

@@ -58,7 +58,7 @@ export default function OGImage() {
             letterSpacing: 3,
           }}
         >
-          <span>US LIQUOR REGISTRIES · SWEPT DAILY</span>
+          <span>9 VERIFIED US MARKETS · TERRITORY MAPS &amp; DAILY DOSSIERS</span>
           <span style={{ color: "#e9a13b" }}>{BRAND.url.replace(/^https?:\/\//, "")}</span>
         </div>
       </div>

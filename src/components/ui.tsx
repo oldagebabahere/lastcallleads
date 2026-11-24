@@ -125,13 +125,18 @@ export function Nav() {
         }`}
       >
         <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3 sm:px-5 sm:py-3.5">
-          <Link href="/" className="group flex items-center gap-2.5 text-cream">
-            <span className="logo-neon flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-amber/40 bg-ink text-amber shadow-[inset_0_1px_0_rgba(232,176,84,0.15)] transition-all duration-500 group-hover:border-amber/70 group-hover:text-amber">
-              <LogoMark className="h-5 w-5" withDrop />
+          <Link href="/" className="group flex items-center gap-3 text-cream">
+            <span className="logo-neon flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-amber/50 bg-ink shadow-[0_0_22px_-6px_rgba(229,176,80,0.55)] transition-all duration-500 group-hover:scale-[1.04] group-hover:border-amber">
+              <LogoMark className="h-full w-full" />
             </span>
-            <span className="font-display text-base font-semibold tracking-tight sm:text-lg">
-              {BRAND.name}
-              <span className="text-amber">.</span>
+            <span className="leading-tight">
+              <span className="block font-display text-base font-semibold tracking-tight sm:text-lg">
+                {BRAND.name}
+                <span className="text-amber">.</span>
+              </span>
+              <span className="hidden font-mono text-[8px] tracking-[0.24em] text-amber/80 sm:block">
+                HOSPITALITY INTELLIGENCE
+              </span>
             </span>
           </Link>
 
@@ -274,10 +279,12 @@ export function Footer() {
       </div>
       <div className="mx-auto flex max-w-6xl flex-col gap-6 px-5 py-10 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <p className="flex items-center gap-2 font-display text-lg font-semibold">
-            <LogoMark className="h-7 w-7 text-amber" />
-            {BRAND.name}
-            <span className="text-amber">.</span>
+          <p className="flex items-center gap-3 font-display text-lg font-semibold">
+            <LogoMark className="h-11 w-11 rounded-lg border border-amber/45 shadow-[0_0_24px_-8px_rgba(229,176,80,0.6)]" />
+            <span>
+              {BRAND.name}
+              <span className="text-amber">.</span>
+            </span>
           </p>
           <p className="mt-1 font-mono text-[11px] tracking-[0.15em] text-faint">
             PUBLIC-RECORD INTEL · SWEPT DAILY · DELIVERED EVERY MORNING
