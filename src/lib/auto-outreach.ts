@@ -470,6 +470,7 @@ export async function runAutoOutreach(
   }
 
   const TARGET_CATEGORIES = ["distributor", "brewery", "beverage", "insurance", "attorney"];
+  const candidateLimit = Math.min(24, Math.max(8, freshBudget * 3));
   const loadCandidates = () =>
     db
       .select()
@@ -483,18 +484,22 @@ export async function runAutoOutreach(
         )
       )
       .orderBy(desc(prospects.id))
-      .limit(freshBudget * 4);
+      .limit(candidateLimit);
 
   let candidates = await loadCandidates();
 
-  // Zero-touch auto-harvest: if this state has fewer than 12 prospects with websites,
-  // automatically pull FREE, unlimited breweries, beverage suppliers, insurance agencies &
-  // attorneys straight from OpenStreetMap (zero API key required!)
-  if (candidates.length < 12) {
-    await harvestProspects(state, ["brewery", "beverage", "insurance", "attorney"]).catch(
-      () => undefined
-    );
-    await harvestDistributors(state, 3).catch(() => undefined);
+  // Zero-touch auto-harvest: if this state has fewer than 8 prospects with websites,
+  // pull ONE fast category from OpenStreetMap per pulse (keeps well inside Vercel 60s limit!).
+  if (candidates.length < 8) {
+    const harvestOrder = ["brewery", "beverage", "insurance", "attorney"];
+    const pickedCat = harvestOrder[new Date().getUTCHours() % harvestOrder.length];
+    await Promise.race([
+      harvestProspects(state, [pickedCat]).catch(() => undefined),
+      new Promise((r) => setTimeout(r, 18_000)),
+    ]);
+    if (process.env.BRAVE_API_KEY?.trim()) {
+      await harvestDistributors(state, 2).catch(() => undefined);
+    }
     candidates = await loadCandidates();
   }
 

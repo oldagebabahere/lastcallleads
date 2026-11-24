@@ -5,6 +5,7 @@ import { db } from "@/db";
 import { ensureSchema } from "@/db/bootstrap";
 import { emailLog, subscribers } from "@/db/schema";
 import { adminKeySet, isAdminKey } from "@/lib/auth";
+import { getOutreachSmtpAccounts, isAutoOutreachActive } from "@/lib/mailer";
 import { desc } from "drizzle-orm";
 import { AddCustomer, GenKey, RowButtons, TestEmail } from "./client";
 
@@ -53,19 +54,27 @@ export default async function CustomersPage({
   const from = process.env.ALERT_FROM_EMAIL ?? null;
   const ops = process.env.OPS_EMAIL ?? null;
   const resendOk = Boolean(process.env.RESEND_API_KEY);
+  const smtpFailoverOk = Boolean(process.env.SMTP_USER?.trim() && process.env.SMTP_PASS?.trim());
+  const outreachPoolCount = getOutreachSmtpAccounts().length + (resendOk ? 1 : 0);
+  const outreachOn = isAutoOutreachActive();
+  const telegramOk = Boolean(
+    process.env.TELEGRAM_BOT_TOKEN?.trim() && process.env.TELEGRAM_CHAT_ID?.trim()
+  );
   const sharedFrom = Boolean(from && from.includes("resend.dev"));
   const postalOk = Boolean(process.env.NEXT_PUBLIC_BUSINESS_POSTAL_ADDRESS?.trim());
   const fmt = (d: Date | null) =>
     d ? new Date(d).toISOString().slice(0, 16).replace("T", " ") : "—";
 
   const badge = (s: string) =>
-    s === "active"
+    s === "active" || s === "sent"
       ? "bg-green-500/15 text-green-300 border border-green-500/30"
-      : s === "trial"
+      : s === "trial" || s === "dry_run"
         ? "bg-amber/15 text-amber border border-amber/30"
-        : s === "waitlist"
-          ? "bg-cream/10 text-cream/60 border border-line"
-          : "bg-cream/5 text-smoke border border-line";
+        : s === "error" || s === "failed"
+          ? "bg-red-500/15 text-red-300 border border-red-500/30"
+          : s === "waitlist"
+            ? "bg-cream/10 text-cream/60 border border-line"
+            : "bg-cream/5 text-smoke border border-line";
 
   return (
     <main className="min-h-screen px-5 pb-20 pt-24">
@@ -91,13 +100,22 @@ export default async function CustomersPage({
           </p>
           <div className="mt-4 flex flex-wrap gap-x-6 gap-y-2 text-sm">
             <span className={resendOk ? "font-semibold text-green-300" : "font-semibold text-red-300"}>
-              RESEND_API_KEY {resendOk ? "✓ set hai" : "✗ set NAHI (Vercel me daalo)"}
+              RESEND_API_KEY {resendOk ? "✓ live" : "✗ missing"}
+            </span>
+            <span className={smtpFailoverOk ? "font-semibold text-green-300" : "font-semibold text-amber"}>
+              GMAIL FAILOVER {smtpFailoverOk ? "✓ armed" : "optional"}
+            </span>
+            <span className={outreachOn ? "font-semibold text-green-300" : "font-semibold text-amber"}>
+              OUTREACH POOL {outreachOn ? `✓ ${outreachPoolCount} accounts` : "off"}
+            </span>
+            <span className={telegramOk ? "font-semibold text-green-300" : "font-semibold text-amber"}>
+              TELEGRAM {telegramOk ? "✓ connected" : "off"}
             </span>
             <span className="text-cream/80">
-              From email: <span className="font-semibold text-cream">{from ?? "— set nahi —"}</span>
+              From: <span className="font-semibold text-cream">{from ?? "— not set —"}</span>
             </span>
             <span className="text-cream/80">
-              OPS email: <span className="font-semibold text-cream">{ops ?? "— set nahi —"}</span>
+              OPS: <span className="font-semibold text-cream">{ops ?? "— not set —"}</span>
             </span>
           </div>
           {!postalOk && (
@@ -123,7 +141,7 @@ export default async function CustomersPage({
           {/* last 25 emails */}
           <div className="mt-6 overflow-x-auto">
             <p className="mb-2 font-mono text-sm font-semibold tracking-[0.12em] text-cream/70">
-              LAST 25 EMAILS (daily morning sweep runs at 11:30 UTC)
+              LAST 25 EMAILS (daily morning sweep runs at 11:00 UTC)
             </p>
             <table className="w-full min-w-[720px] text-left text-sm">
               <thead>

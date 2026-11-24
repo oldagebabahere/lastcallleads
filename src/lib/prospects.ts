@@ -71,29 +71,27 @@ type OsmElement = {
 };
 
 async function overpass(query: string): Promise<OsmElement[]> {
-  // Overpass is community-run: it can answer "server busy" or hang, so we
-  // retry each mirror with a short backoff before moving to the next one.
+  // Overpass is community-run: try each mirror once with a tight 12s timeout so
+  // serverless endpoints stay safely inside Vercel's 60s execution window.
   for (const mirror of MIRRORS) {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        const res = await fetch(mirror, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/x-www-form-urlencoded",
-            "User-Agent": "pourwatch/1.0 (prospect-monitor)",
-          },
-          body: "data=" + encodeURIComponent(query),
-          signal: AbortSignal.timeout(22_000),
-          cache: "no-store",
-        });
-        if (!res.ok) continue;
-        const data = (await res.json()) as { elements?: OsmElement[] };
-        if (Array.isArray(data.elements)) return data.elements;
-      } catch {
-        // fall through to retry
-      }
-      await new Promise((r) => setTimeout(r, 3000));
+    try {
+      const res = await fetch(mirror, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "User-Agent": "pourwatch/1.0 (prospect-monitor)",
+        },
+        body: "data=" + encodeURIComponent(query),
+        signal: AbortSignal.timeout(12_000),
+        cache: "no-store",
+      });
+      if (!res.ok) continue;
+      const data = (await res.json()) as { elements?: OsmElement[] };
+      if (Array.isArray(data.elements)) return data.elements;
+    } catch {
+      // fall through to next mirror
     }
+    await new Promise((r) => setTimeout(r, 800));
   }
   throw new Error("all overpass mirrors failed");
 }

@@ -5,7 +5,8 @@ import { db } from "@/db";
 import { ensureSchema } from "@/db/bootstrap";
 import { prospects } from "@/db/schema";
 import { adminKeySet, isAdminKey } from "@/lib/auth";
-import { and, desc, eq, isNotNull, sql } from "drizzle-orm";
+import { LIVE_STATE_CODES } from "@/lib/states";
+import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import ProspectMap, { type MapPin } from "@/components/prospect-map";
 
 export const dynamic = "force-dynamic";
@@ -45,6 +46,7 @@ export default async function MapPage({
   const byState = await db
     .select({ state: prospects.state, n: sql<number>`count(*)::int` })
     .from(prospects)
+    .where(inArray(prospects.state, [...LIVE_STATE_CODES]))
     .groupBy(prospects.state)
     .orderBy(desc(sql`count(*)`))
     .limit(20);

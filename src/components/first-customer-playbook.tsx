@@ -31,7 +31,7 @@ const STEPS: { id: string; label: string; hint: string }[] = [
   {
     id: "deploy",
     label: "Site & domain live",
-    hint: "Custom domain opens cleanly and /coverage shows live state feeds",
+    hint: "Custom domain opens cleanly and /coverage-page + /map show live state feeds",
   },
   {
     id: "pull",
@@ -60,8 +60,8 @@ const STEPS: { id: string; label: string; hint: string }[] = [
   },
   {
     id: "five",
-    label: "First 5 outreach emails sent",
-    hint: "Use OUTREACH-AUTOMATION.md Apps Script or direct email",
+    label: "24/7 Google Apps Script Autopilot ON",
+    hint: "Staggered Groq AI outreach (14-day Gmail warm-up) + daily Telegram reports",
   },
   {
     id: "trial",

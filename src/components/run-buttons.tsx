@@ -17,6 +17,7 @@ export default function RunButtons({ adminKey }: { adminKey: string }) {
       tier?: "fast" | "heavy" | "all";
       force?: boolean;
       dryRun?: boolean;
+      limit?: number;
     }
   ) {
     if (busy) return;
@@ -104,7 +105,26 @@ export default function RunButtons({ adminKey }: { adminKey: string }) {
         <Btn
           label="Outreach Dry-Run"
           busy={busy}
-          onClick={() => run("Outreach Dry-Run", { action: "outreach", dryRun: true })}
+          onClick={() => run("Outreach Dry-Run", { action: "outreach", dryRun: true, limit: 3 })}
+          secondary
+        />
+        <Btn
+          label="Send Outreach (3 Live)"
+          busy={busy}
+          onClick={() => run("Send Outreach (3 Live)", { action: "outreach", dryRun: false, limit: 3 })}
+          secondary
+        />
+        <Btn
+          label="Clean Legacy DB"
+          busy={busy}
+          onClick={() => run("Clean Legacy DB", { action: "maintenance" })}
+          secondary
+          heal
+        />
+        <Btn
+          label="Test Telegram"
+          busy={busy}
+          onClick={() => run("Test Telegram", { action: "test_telegram" })}
           secondary
         />
       </div>

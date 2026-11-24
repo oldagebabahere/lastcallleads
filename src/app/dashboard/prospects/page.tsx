@@ -7,7 +7,8 @@ import { ensureSchema } from "@/db/bootstrap";
 import { prospects } from "@/db/schema";
 import { adminKeySet, isAdminKey } from "@/lib/auth";
 import { PROSPECT_CATEGORIES } from "@/lib/prospects";
-import { desc, sql } from "drizzle-orm";
+import { LIVE_STATE_CODES, stateFullName } from "@/lib/states";
+import { desc, inArray, sql } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
@@ -54,6 +55,7 @@ export default async function ProspectsPage({
   const byState = await db
     .select({ state: prospects.state, n: sql<number>`count(*)::int` })
     .from(prospects)
+    .where(inArray(prospects.state, [...LIVE_STATE_CODES]))
     .groupBy(prospects.state)
     .orderBy(desc(sql`count(*)`))
     .limit(15);
@@ -75,24 +77,23 @@ export default async function ProspectsPage({
           Tumhare customers ka daily list
         </h1>
         <p className="mt-2 max-w-2xl text-sm leading-relaxed text-cream/70">
-          Every attorney, insurance agent, beverage seller and bar in the USA.
-          Machine khud bhar ti hai (Wed/Fri ek category + ek naya state).
-          RUN dabao = ek category TURANT (bade state ke liye 4 baar dabao).
-          Phir CSV download karke outreach shuru.
+          Craft breweries, wineries, beverage suppliers, hospitality attorneys &amp; liquor
+          insurance agencies across our 9 verified live markets. Machine khud bhar ti hai — ya
+          neeche kisi bhi state pe click karke turant harvest karo aur CSV download karo.
         </p>
 
         {/* run buttons */}
         <p className="mt-2 font-mono text-xs text-cream/50">
-          1 RUN = 1 category (~30 sec) · poora state = 4 RUN · machine waise bhi Wed/Fri khud bharti hai
+          1 RUN = 1 category (~15 sec) · 9 live markets · zero API key required (OpenStreetMap)
         </p>
         <div className="mt-6 flex flex-wrap gap-2">
-          {["TX", "FL", "CA", "NY", "GA", "PA", "IL", "OH", "AZ", "TN"].map((s) => (
+          {LIVE_STATE_CODES.map((s) => (
             <a
               key={s}
-              href={`/api/cron/prospects?state=${s}&secret=${k}`}
+              href={`/api/cron/prospects?state=${s}&secret=${encodeURIComponent(k)}`}
               className="rounded-md border border-line bg-panel px-3 py-2 font-mono text-sm tracking-[0.12em] text-amber hover:border-amber/50"
             >
-              RUN {s}
+              RUN {stateFullName(s).toUpperCase()}
             </a>
           ))}
         </div>

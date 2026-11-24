@@ -1,4 +1,4 @@
-import { desc, sql } from "drizzle-orm";
+import { desc, inArray, sql } from "drizzle-orm";
 import { db, pool } from "@/db";
 import { ensureSchema } from "@/db/bootstrap";
 import {
@@ -13,8 +13,15 @@ import { buildLeadSheet } from "@/lib/leadsheet";
 import { adminKeySet, isAdminKey } from "@/lib/auth";
 import { dodoConfigured } from "@/lib/dodo";
 import { ALL_STATE_SOURCES, HEAVY_SOURCE_LABELS } from "@/lib/ingest-aggregator";
+import {
+  getOutreachSmtpAccounts,
+  isAutoOutreachActive,
+  isMailTransportConfigured,
+} from "@/lib/mailer";
+import { PUBLIC_CONFIG } from "@/lib/public-config";
 import { getHealthMap } from "@/lib/pourwatch";
 import { hoursAgoMs } from "@/lib/queries";
+import { LIVE_STATE_CODES, LIVE_STATE_NAMES_DOT } from "@/lib/states";
 import RunButtons from "@/components/run-buttons";
 import SubscriberActions from "@/components/subscriber-actions";
 import AddClientForm from "@/components/add-client-form";
@@ -119,6 +126,7 @@ export default async function Dashboard({
       db
         .select({ state: licenses.state, n: sql<number>`count(*)::int` })
         .from(licenses)
+        .where(inArray(licenses.state, [...LIVE_STATE_CODES]))
         .groupBy(licenses.state)
         .orderBy(desc(sql`count(*)`)),
       db.select().from(ingestRuns).orderBy(desc(ingestRuns.id)).limit(60),
@@ -233,7 +241,14 @@ export default async function Dashboard({
   const liveSourcesCount = sourceCards.filter((c) => c.isLive).length;
   const pausedSourcesCount = sourceCards.filter((c) => c.isPaused).length;
 
-  const resendSet = Boolean(process.env.RESEND_API_KEY);
+  const mailReady = isMailTransportConfigured();
+  const outreachActive = isAutoOutreachActive();
+  const outreachAccounts =
+    getOutreachSmtpAccounts().length + (process.env.RESEND_API_KEY?.trim() ? 1 : 0);
+  const telegramReady = Boolean(
+    process.env.TELEGRAM_BOT_TOKEN?.trim() && process.env.TELEGRAM_CHAT_ID?.trim()
+  );
+  const groqReady = Boolean(process.env.GROQ_API_KEY?.trim());
   const key2 = key!;
 
   return (
@@ -248,7 +263,17 @@ export default async function Dashboard({
           </div>
           <div className="flex flex-wrap items-center gap-2 font-mono text-xs tracking-[0.15em]">
             <StatusDot ok={ready} label={ready ? "DATABASE OK" : "DATABASE PROBLEM"} />
-            <StatusDot ok={resendSet} label={resendSet ? "EMAIL LIVE" : "EMAIL DRY-RUN"} />
+            <StatusDot ok={mailReady} label={mailReady ? "EMAIL LIVE" : "EMAIL DRY-RUN"} />
+            <StatusDot
+              ok={outreachActive}
+              warn={!outreachActive}
+              label={outreachActive ? `OUTREACH (${outreachAccounts})` : "OUTREACH OFF"}
+            />
+            <StatusDot
+              ok={telegramReady}
+              warn={!telegramReady}
+              label={telegramReady ? "TELEGRAM ON" : "TELEGRAM OFF"}
+            />
             <StatusDot
               ok={dodoConfigured()}
               label={dodoConfigured() ? "BILLING LIVE" : "BILLING OFF"}
@@ -292,7 +317,7 @@ export default async function Dashboard({
             sub={
               runRows[0]
                 ? `last sweep ${fmtDate(runRows[0].startedAt)}`
-                : "daily sweep 11:30 UTC"
+                : "daily sweep 11:00 UTC"
             }
           />
         </div>
@@ -333,16 +358,16 @@ export default async function Dashboard({
             </li>
             <li>
               <b className="text-cream">2 · SYSTEM STATUS</b> — Environment variable checklist
-              (green = configured, amber = set in Vercel / GitHub Secrets)
+              (green = ready, amber = add in Vercel Environment Variables)
             </li>
             <li>
-              <b className="text-cream">3 · SOURCE HEALTH</b> — Live PourWatch status for all{" "}
-              {ALL_STATE_SOURCES.length} feeds (auto-pauses broken feeds &amp; self-heals Socrata
-              datasets)
+              <b className="text-cream">3 · SOURCE HEALTH</b> — Live PourWatch status for{" "}
+              {`all ${ALL_STATE_SOURCES.length} live feeds`} (auto-pauses broken feeds &amp;
+              self-heals Socrata datasets)
             </li>
             <li>
-              <b className="text-cream">4 · MANUAL OVERRIDE</b> — Trigger fast/heavy sweeps,
-              PourWatch self-heal, receipts, or email digests immediately
+              <b className="text-cream">4 · MANUAL OVERRIDE</b> — Trigger 9-market sweeps, DB
+              cleanup, PourWatch self-heal, receipts, Telegram test, or outreach immediately
             </li>
             <li>
               <b className="text-cream">5 · LEAD LAB</b> — Auto-paired counties with new filings +
@@ -350,13 +375,14 @@ export default async function Dashboard({
             </li>
             <li>
               <b className="text-cream">6 · SUBSCRIBERS</b> — Real-time MRR, active/trial accounts,
-              and manual onboarding across all 50 states
+              and manual onboarding across all 9 live states
             </li>
             <li>
               <b className="text-cream">7 · CONTACT INBOX</b> — Inbound website messages
             </li>
             <li>
-              <b className="text-cream">8 · LAST EMAILS</b> — Delivery log with Resend status
+              <b className="text-cream">8 · LAST EMAILS</b> — Delivery log (Resend + Gmail failover
+              + outreach)
             </li>
             <li>
               <b className="text-cream">9 · RECENT SWEEPS</b> — Per-source ingestion audit trail
@@ -417,19 +443,36 @@ export default async function Dashboard({
           </p>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
             {[
-              { ok: Boolean(process.env.DATABASE_URL), title: "Database", hint: "Neon / Postgres" },
+              { ok: Boolean(process.env.DATABASE_URL), title: "Database", hint: "Supabase / Postgres" },
               { ok: isAdminKey(key ?? null), title: "Admin key", hint: "ADMIN_KEY verified" },
               {
-                ok: Boolean(process.env.RESEND_API_KEY),
-                title: "Email (Resend)",
-                hint: "Daily digests + alerts",
+                ok: mailReady,
+                title: "Transactional Mail",
+                hint: process.env.SMTP_USER?.trim()
+                  ? "Resend + Gmail failover"
+                  : "Resend API primary",
+              },
+              {
+                ok: outreachActive,
+                title: `Outreach Pool (${outreachAccounts})`,
+                hint: "14-day Gmail warm-up + rotation",
+              },
+              {
+                ok: groqReady,
+                title: "Groq AI Openers",
+                hint: "Hyper-personalized cold intros",
+              },
+              {
+                ok: telegramReady,
+                title: "Telegram Alerts",
+                hint: "Daily reports + sales pings",
               },
               { ok: Boolean(process.env.OPS_EMAIL), title: "Ops email", hint: "PourWatch alerts" },
               {
                 ok: Boolean(
-                  process.env.NEXT_PUBLIC_BUSINESS_LEGAL_NAME &&
-                  process.env.NEXT_PUBLIC_BUSINESS_POSTAL_ADDRESS &&
-                  process.env.NEXT_PUBLIC_CONTACT_EMAIL
+                  PUBLIC_CONFIG.legalName &&
+                  PUBLIC_CONFIG.postalAddress &&
+                  PUBLIC_CONFIG.contactEmail
                 ),
                 title: "Legal identity",
                 hint: "CAN-SPAM footer fields",
@@ -445,6 +488,11 @@ export default async function Dashboard({
                 hint: "Checkout + Standard Webhooks",
               },
               { ok: Boolean(process.env.CRON_SECRET), title: "Cron secret", hint: "Protects jobs" },
+              {
+                ok: Boolean(process.env.LINKEDIN_ACCESS_TOKEN?.trim()),
+                title: "LinkedIn (Optional)",
+                hint: "Mon/Wed/Fri auto-posts",
+              },
             ].map((c) => (
               <div
                 key={c.title}
@@ -479,8 +527,8 @@ export default async function Dashboard({
           </div>
           <p className="mb-4 max-w-2xl text-sm leading-relaxed text-cream/70">
             PourWatch tracks all {ALL_STATE_SOURCES.length} live retail feeds across our 9 verified
-            markets (TX · NY · CA · Chicago IL · WA · OR · CO · CT · MO). Broken Socrata feeds
-            auto-pause and self-heal automatically.
+            markets ({LIVE_STATE_NAMES_DOT}). Broken Socrata feeds auto-pause and self-heal
+            automatically.
           </p>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {sourceCards.map(({ spec, h, last, isHeavy, isLive, isPaused, statusLabel }) => (

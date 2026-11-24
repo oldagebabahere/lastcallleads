@@ -12,6 +12,9 @@ import {
 } from "@/lib/ingest-aggregator";
 import { runReceiptsIngest } from "@/lib/ingest-receipts";
 import { runAutoOutreach } from "@/lib/auto-outreach";
+import { runMaintenance } from "@/lib/maintenance";
+import { sendTelegramOwner } from "@/lib/notify";
+import { BRAND } from "@/lib/brand";
 import { clientIp, rateLimit, tooManyRequests } from "@/lib/rate-limit";
 import { db } from "@/db";
 import { subscribers } from "@/db/schema";
@@ -125,6 +128,23 @@ export async function POST(req: Request) {
       limit: body.limit,
     });
     return Response.json({ ok: report.ok, report });
+  }
+
+  if (action === "maintenance") {
+    await ensureSchema();
+    const report = await runMaintenance();
+    const dbMb =
+      report.databaseBytes !== null
+        ? Number((report.databaseBytes / (1024 * 1024)).toFixed(1))
+        : null;
+    return Response.json({ ...report, dbMb });
+  }
+
+  if (action === "test_telegram") {
+    const res = await sendTelegramOwner(
+      `✅ ${BRAND.name} Control Room Test\nYour Telegram bot is live and connected!\nTime: ${new Date().toISOString()}`
+    );
+    return Response.json({ ok: res.ok, detail: res.detail });
   }
 
   if (action === "add_subscriber") {
