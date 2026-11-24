@@ -1,11 +1,45 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { CheckCircle2, LoaderCircle, Send } from "lucide-react";
+
+const SUBJECT_OPTIONS = [
+  "Annual Prepay (2 Months Free)",
+  "Enterprise All-9 Plan ($499/mo)",
+  "Sales question",
+  "Billing or cancellation",
+  "Data correction",
+  "Technical support",
+  "Press or other",
+] as const;
 
 export default function ContactForm() {
   const [phase, setPhase] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [message, setMessage] = useState("");
+  const [subject, setSubject] = useState<string>("Sales question");
+  const [draftBody, setDraftBody] = useState<string>("");
+
+  useEffect(() => {
+    const raw = (new URLSearchParams(window.location.search).get("subject") ?? "").trim();
+    if (!raw) return;
+    const lower = raw.toLowerCase();
+    queueMicrotask(() => {
+      if (lower.includes("annual")) {
+        setSubject("Annual Prepay (2 Months Free)");
+        setDraftBody(
+          "Hi Last Call Leads team — I'd like to claim the Annual Prepay offer (2 months free).\nPlan (Territory $1,290/yr or Pro 3-State $2,490/yr): \nTarget state(s): "
+        );
+      } else if (lower.includes("enterprise") || lower.includes("499") || lower.includes("api")) {
+        setSubject("Enterprise All-9 Plan ($499/mo)");
+        setDraftBody(
+          "Hi Last Call Leads team — we're interested in the All-9 Enterprise + REST API plan ($499/mo).\nTeam size / CRM: "
+        );
+      } else {
+        const match = SUBJECT_OPTIONS.find((o) => o.toLowerCase() === lower);
+        if (match) setSubject(match);
+      }
+    });
+  }, []);
 
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -64,18 +98,33 @@ export default function ContactForm() {
         </label>
         <label className="text-xs text-smoke">
           SUBJECT
-          <select name="subject" className={`${input} mt-1.5`} defaultValue="Sales question">
-            <option>Sales question</option>
-            <option>Data correction</option>
-            <option>Billing or cancellation</option>
-            <option>Press or other</option>
-            <option>Technical support</option>
+          <select
+            name="subject"
+            value={subject}
+            onChange={(e) => setSubject(e.target.value)}
+            className={`${input} mt-1.5`}
+          >
+            {SUBJECT_OPTIONS.map((opt) => (
+              <option key={opt} value={opt}>
+                {opt}
+              </option>
+            ))}
           </select>
         </label>
       </div>
       <label className="block text-xs text-smoke">
         MESSAGE
-        <textarea name="message" required minLength={10} maxLength={5000} rows={7} className={`${input} mt-1.5 resize-y`} placeholder="How can we help?" />
+        <textarea
+          name="message"
+          required
+          minLength={10}
+          maxLength={5000}
+          rows={7}
+          value={draftBody}
+          onChange={(e) => setDraftBody(e.target.value)}
+          className={`${input} mt-1.5 resize-y`}
+          placeholder="Tell us your target state(s), plan, or question..."
+        />
       </label>
       <label className="hidden" aria-hidden="true">
         Website

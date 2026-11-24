@@ -1,13 +1,13 @@
 import type { Metadata } from "next";
-import { Mail, Newspaper, ShieldCheck } from "lucide-react";
+import { Building2, Mail, ShieldCheck, Sparkles } from "lucide-react";
 import ContactForm from "@/components/contact-form";
 import { Footer, Nav } from "@/components/ui";
 import { PUBLIC_CONFIG } from "@/lib/public-config";
 
 export const metadata: Metadata = {
-  title: "Contact sales, support, data corrections & press",
+  title: "Contact sales, annual billing, Enterprise API & support",
   description:
-    "Contact Last Call Leads about sales, billing, technical support, public-record corrections, or press requests.",
+    "Contact the Last Call Leads team for Annual Prepay (2 months free), All-9 Enterprise + REST API, team seats, billing help, or data corrections.",
 };
 
 export default function ContactPage() {
@@ -15,23 +15,43 @@ export default function ContactPage() {
     <main className="min-h-screen">
       <Nav />
       <div className="mx-auto max-w-5xl px-5 pb-20 pt-28">
-        <p className="eyebrow">[ Contact · real replies ]</p>
+        <p className="eyebrow">[ Sales &amp; Support Desk · Direct Team Replies ]</p>
         <h1 className="font-display mt-5 text-4xl font-medium sm:text-5xl">
-          Talk to <span className="italic text-amber">Last Call Leads.</span>
+          Talk to the <span className="italic text-amber">Last Call Leads</span> team.
         </h1>
         <p className="mt-4 max-w-2xl text-sm leading-relaxed text-smoke">
-          Sales questions, billing help, data corrections and press are all welcome.
-          Messages are stored securely so they are not lost if email delivery has a temporary issue.
+          Need an Annual Prepay invoice (2 months free), All-9 Enterprise API key, custom state
+          rollout, or billing support? Drop a note below — sales inquiries trigger an instant team
+          alert so we respond fast.
         </p>
 
-        <div className="mt-10 grid gap-8 lg:grid-cols-[1fr_300px]">
+        <div className="mt-10 grid gap-8 lg:grid-cols-[1fr_320px]">
           <ContactForm />
           <aside className="space-y-4">
-            <Info icon={Mail} title="Email" body={PUBLIC_CONFIG.contactEmail} href={`mailto:${PUBLIC_CONFIG.contactEmail}`} />
-            <Info icon={ShieldCheck} title="Data correction" body="Send the record URL and the official source showing the correction." />
-            <Info icon={Newspaper} title="Press & research" body="You may cite our public reports with a link to the source report." />
+            <Info
+              icon={Sparkles}
+              title="Annual Prepay (2 Months Free)"
+              body="Territory $1,290/yr (save $258) or Pro 3-State $2,490/yr (save $498). Corporate card or invoice link sent same day."
+            />
+            <Info
+              icon={Building2}
+              title="All-9 Enterprise + REST API"
+              body="$499/mo — all 9 live states, unlimited team seats, and a same-day REST API key for HubSpot / Salesforce."
+            />
+            <Info
+              icon={Mail}
+              title="Direct Email"
+              body={PUBLIC_CONFIG.contactEmail}
+              href={`mailto:${PUBLIC_CONFIG.contactEmail}`}
+            />
+            <Info
+              icon={ShieldCheck}
+              title="Data Correction & Press"
+              body="Share the filing URL + official portal reference and our team updates it promptly."
+            />
             <div className="rounded-xl border border-line bg-panel p-5 text-xs leading-relaxed text-faint">
-              Typical response target: two US business days. We do not provide legal advice or process liquor-license applications.
+              Sales &amp; annual upgrades: typically answered within a few hours. We do not provide
+              legal advice or file liquor applications.
             </div>
           </aside>
         </div>

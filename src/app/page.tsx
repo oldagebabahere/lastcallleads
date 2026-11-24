@@ -671,12 +671,20 @@ export default async function Home() {
           <p className="mt-3 font-mono text-[10px] tracking-[0.14em] text-inkread/55">
             API KEY DELIVERED SAME DAY · CUSTOM STATE REQUESTS PRIORITIZED
           </p>
-          <a
-            href={`mailto:${PUBLIC_CONFIG.contactEmail}?subject=Enterprise%20All-9%20Plan`}
-            className="mt-4 inline-block rounded-full border border-wine2/60 px-6 py-2.5 font-mono text-[11px] font-semibold tracking-[0.14em] text-wine2 transition-colors hover:bg-wine2 hover:text-[#f6eee1]"
-          >
-            {`EMAIL US — ${PUBLIC_CONFIG.contactEmail.toUpperCase()} →`}
-          </a>
+          <div className="mt-4 flex flex-wrap items-center justify-center gap-3">
+            <Link
+              href="/contact?subject=Enterprise%20All-9%20Plan%20(%24499%2Fmo)"
+              className="inline-block rounded-full bg-wine2 px-6 py-2.5 font-mono text-[11px] font-semibold tracking-[0.14em] text-[#f6eee1] transition-transform hover:scale-[1.03]"
+            >
+              CONTACT SALES TEAM →
+            </Link>
+            <a
+              href={`mailto:${PUBLIC_CONFIG.contactEmail}?subject=Enterprise%20All-9%20Plan`}
+              className="inline-block rounded-full border border-wine2/60 px-5 py-2.5 font-mono text-[11px] font-semibold tracking-[0.14em] text-wine2 transition-colors hover:bg-wine2 hover:text-[#f6eee1]"
+            >
+              {PUBLIC_CONFIG.contactEmail.toUpperCase()}
+            </a>
+          </div>
         </div>
 
         <div className="stat-card relative mx-auto mt-6 max-w-5xl rounded-xl p-5 text-center text-inkread">
