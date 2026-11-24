@@ -67,10 +67,13 @@ export default async function CoveragePage() {
           9 verified US markets. Honest status.
         </h1>
         <p className="mt-4 max-w-2xl text-sm leading-relaxed text-smoke">
-          We only sell states where we pull <span className="text-cream">real retail bar,
-          restaurant, brewpub &amp; liquor-store filings</span> directly from official government
-          portals every morning. No padded &ldquo;50 states&rdquo; wholesaler filler, no dead feeds.
-          Status below is computed live from our PourWatch health monitor.
+          We only sell states where we pull{" "}
+          <span className="text-cream">
+            real retail bar, restaurant, brewpub &amp; liquor-store filings
+          </span>{" "}
+          directly from official government portals every morning. No padded &ldquo;50
+          states&rdquo; wholesaler filler, no dead feeds. Status below is computed live from our
+          PourWatch health monitor.
         </p>
 
         {/* summary strip */}
@@ -133,7 +136,7 @@ export default async function CoveragePage() {
                     {r.status}
                   </td>
                   <td className="hidden px-4 py-3.5 text-xs text-smoke md:table-cell">
-                    {r.reasons.length ? (
+                    {r.status !== "LIVE" && r.reasons.length ? (
                       <span className="text-amber">{r.reasons[0].slice(0, 75)}</span>
                     ) : (
                       r.highlight

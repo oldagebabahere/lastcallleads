@@ -141,9 +141,9 @@ export function safeDate(
     const maxYear = new Date().getFullYear() + opts.allowFutureYears;
     if (y > maxYear) return null;
   } else {
-    // Filing / issue dates shouldn't be more than 7 days in the future
-    // (guards against registry typos like Colorado's "2262-04-01" or future effective dates).
-    const maxMs = Date.now() + 7 * 86_400_000;
+    // Filing / issue dates shouldn't be more than 1 day in the future
+    // (guards against next-month effective-date renewals like Dec 1 crowding live feeds).
+    const maxMs = Date.now() + 86_400_000;
     if (d.getTime() > maxMs) return null;
   }
   return d;

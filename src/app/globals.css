@@ -292,15 +292,22 @@ body.intro-lock .hero-fade {
   100% { transform: translateY(-104vh) translateX(14px); opacity: 0; }
 }
 
-/* ---------- footer giant wordmark ---------- */
+/* ---------- footer giant wordmark (clean metallic editorial serif — zero stroke seams) ---------- */
 .footer-giant {
-  font-family: var(--font-display);
-  font-weight: 700;
-  font-size: clamp(3.5rem, 13.5vw, 11rem);
-  line-height: 0.9;
-  letter-spacing: -0.02em;
+  font-family: var(--font-serif);
+  font-weight: 600;
+  font-size: clamp(2.6rem, 9.2vw, 7.6rem);
+  line-height: 1;
+  letter-spacing: 0.08em;
+  background: linear-gradient(
+    180deg,
+    rgba(229, 176, 80, 0.28) 0%,
+    rgba(246, 238, 225, 0.1) 58%,
+    rgba(246, 238, 225, 0.02) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
   color: transparent;
-  -webkit-text-stroke: 1px rgba(246, 238, 225, 0.14);
   user-select: none;
   white-space: nowrap;
 }
@@ -763,14 +770,13 @@ body.intro-lock .hero-fade {
   50%      { transform: translateY(8px); opacity: 0.4; }
 }
 
-/* big ghost section numbers */
+/* big ghost section numbers (clean subtle fill — zero variable-font stroke seams) */
 .ghost-num {
   font-family: var(--font-display);
   font-weight: 700;
   font-size: clamp(4.5rem, 10vw, 8rem);
   line-height: 1;
-  color: transparent;
-  -webkit-text-stroke: 1px rgba(246, 238, 225, 0.14);
+  color: rgba(246, 238, 225, 0.07);
   user-select: none;
 }
 

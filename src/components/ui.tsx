@@ -274,54 +274,93 @@ function SocialIcons() {
 export function Footer() {
   return (
     <footer className="relative border-t border-cream/10 bg-ox-ink text-cream">
-      <div className="overflow-hidden px-5 pt-10">
+      {/* Subtle luxury editorial brand wordmark */}
+      <div className="overflow-hidden border-b border-cream/[0.06] px-5 pb-6 pt-12">
         <p className="footer-giant text-center">{BRAND.name.toUpperCase()}</p>
       </div>
-      <div className="mx-auto flex max-w-6xl flex-col gap-6 px-5 py-10 sm:flex-row sm:items-center sm:justify-between">
+
+      {/* Structured 4-Column Institutional Agency Footer */}
+      <div className="mx-auto grid max-w-6xl gap-10 px-5 py-12 sm:grid-cols-2 lg:grid-cols-[1.35fr_0.85fr_0.9fr_1.15fr]">
+        {/* Col 1: Brand Identity */}
         <div>
-          <p className="flex items-center gap-3 font-display text-lg font-semibold">
-            <LogoMark className="h-11 w-11 rounded-lg border border-amber/45 shadow-[0_0_24px_-8px_rgba(229,176,80,0.6)]" />
-            <span>
-              {BRAND.name}
-              <span className="text-amber">.</span>
+          <Link href="/" className="inline-flex items-center gap-3 text-cream">
+            <LogoMark className="h-11 w-11 shrink-0 rounded-lg border border-amber/45 shadow-[0_0_24px_-8px_rgba(229,176,80,0.6)]" />
+            <span className="leading-tight">
+              <span className="block whitespace-nowrap font-display text-lg font-semibold">
+                {BRAND.name}
+                <span className="text-amber">.</span>
+              </span>
+              <span className="block font-mono text-[9px] tracking-[0.22em] text-amber/80">
+                HOSPITALITY INTELLIGENCE
+              </span>
             </span>
-          </p>
-          <p className="mt-1 font-mono text-[11px] tracking-[0.15em] text-faint">
-            PUBLIC-RECORD INTEL · SWEPT DAILY · DELIVERED EVERY MORNING
+          </Link>
+          <p className="mt-4 max-w-xs text-xs leading-relaxed text-smoke">
+            Daily public liquor-license intelligence swept straight from 18 official US state
+            portals — delivered every morning 60–90 days before doors open.
           </p>
           <SocialIcons />
         </div>
-        <div className="flex flex-wrap gap-x-8 gap-y-2 font-mono text-[11px] tracking-[0.15em] text-smoke">
-          <Link href="/feed" className="hover:text-cream">FEED</Link>
-          <Link href="/map" className="hover:text-cream">MAP</Link>
-          <Link href="/cities" className="hover:text-cream">CITIES</Link>
-          <Link href="/coverage" className="hover:text-cream">COVERAGE</Link>
-          <Link href="/sample" className="hover:text-cream">SAMPLE EMAIL</Link>
-          <Link href="/reports" className="hover:text-cream">WEEKLY REPORTS</Link>
-          <Link href="/for/wine-spirits-distributors" className="hover:text-cream">FOR DISTRIBUTORS</Link>
-          <Link href="/for/craft-breweries" className="hover:text-cream">FOR BREWERIES</Link>
-          <Link href="/for/restaurant-pos-suppliers" className="hover:text-cream">FOR POS REPS</Link>
-          <Link href="/for/commercial-insurance" className="hover:text-cream">FOR INSURANCE</Link>
-          <Link href="/states/texas" className="hover:text-cream">TEXAS</Link>
-          <Link href="/states/new-york" className="hover:text-cream">NEW YORK</Link>
-          <Link href="/states/california" className="hover:text-cream">CALIFORNIA</Link>
-          <Link href="/states/illinois" className="hover:text-cream">ILLINOIS (CHICAGO)</Link>
-          <Link href="/states/washington" className="hover:text-cream">WASHINGTON</Link>
-          <Link href="/states/oregon" className="hover:text-cream">OREGON</Link>
-          <Link href="/states/colorado" className="hover:text-cream">COLORADO</Link>
-          <Link href="/states/connecticut" className="hover:text-cream">CONNECTICUT</Link>
-          <Link href="/states/missouri" className="hover:text-cream">MISSOURI</Link>
-          <Link href="/insights" className="hover:text-cream">DATA DESK</Link>
-          <Link href="/types" className="hover:text-cream">LICENSE TYPES</Link>
-          <Link href="/guides" className="hover:text-cream">GUIDES</Link>
-          <Link href="/refer" className="hover:text-cream">REFERRALS</Link>
-          <Link href="/partner" className="hover:text-cream">PARTNERS</Link>
-          <Link href="/about" className="hover:text-cream">ABOUT</Link>
-          <Link href="/contact" className="hover:text-cream">CONTACT</Link>
+
+        {/* Col 2: Platform */}
+        <div>
+          <p className="font-mono text-[10px] font-semibold tracking-[0.22em] text-amber">
+            PLATFORM
+          </p>
+          <ul className="mt-4 space-y-2.5 text-xs text-smoke">
+            <li><Link href="/feed" className="transition-colors hover:text-cream">Live Filing Feed</Link></li>
+            <li><Link href="/map" className="transition-colors hover:text-cream">Territory Map &amp; Routes</Link></li>
+            <li><Link href="/coverage" className="transition-colors hover:text-cream">Live Coverage &amp; Health</Link></li>
+            <li><Link href="/sample" className="transition-colors hover:text-cream">Sample Morning Dossier</Link></li>
+            <li><Link href="/reports" className="transition-colors hover:text-cream">Weekly Market Reports</Link></li>
+            <li><Link href="/insights" className="transition-colors hover:text-cream">Data Desk &amp; Benchmarks</Link></li>
+          </ul>
+        </div>
+
+        {/* Col 3: Solutions & Resources */}
+        <div>
+          <p className="font-mono text-[10px] font-semibold tracking-[0.22em] text-amber">
+            SOLUTIONS
+          </p>
+          <ul className="mt-4 space-y-2.5 text-xs text-smoke">
+            <li><Link href="/for/wine-spirits-distributors" className="transition-colors hover:text-cream">Wine &amp; Spirits Distributors</Link></li>
+            <li><Link href="/for/craft-breweries" className="transition-colors hover:text-cream">Craft Breweries &amp; Brands</Link></li>
+            <li><Link href="/for/restaurant-pos-suppliers" className="transition-colors hover:text-cream">POS &amp; Payments Teams</Link></li>
+            <li><Link href="/for/commercial-insurance" className="transition-colors hover:text-cream">Liquor Liability Insurance</Link></li>
+            <li><Link href="/guides" className="transition-colors hover:text-cream">Sales Playbooks &amp; Guides</Link></li>
+            <li><Link href="/types" className="transition-colors hover:text-cream">License Types Directory</Link></li>
+          </ul>
+        </div>
+
+        {/* Col 4: Live Markets + Company */}
+        <div>
+          <p className="font-mono text-[10px] font-semibold tracking-[0.22em] text-amber">
+            9 LIVE MARKETS
+          </p>
+          <ul className="mt-4 grid grid-cols-2 gap-x-4 gap-y-2 text-xs text-smoke">
+            <li><Link href="/states/texas" className="transition-colors hover:text-cream">Texas</Link></li>
+            <li><Link href="/states/new-york" className="transition-colors hover:text-cream">New York</Link></li>
+            <li><Link href="/states/california" className="transition-colors hover:text-cream">California</Link></li>
+            <li><Link href="/states/illinois" className="transition-colors hover:text-cream">Illinois (Chicago)</Link></li>
+            <li><Link href="/states/washington" className="transition-colors hover:text-cream">Washington</Link></li>
+            <li><Link href="/states/oregon" className="transition-colors hover:text-cream">Oregon</Link></li>
+            <li><Link href="/states/colorado" className="transition-colors hover:text-cream">Colorado</Link></li>
+            <li><Link href="/states/connecticut" className="transition-colors hover:text-cream">Connecticut</Link></li>
+            <li><Link href="/states/missouri" className="transition-colors hover:text-cream">Missouri</Link></li>
+            <li><Link href="/cities" className="font-medium text-amber hover:underline">All Cities →</Link></li>
+          </ul>
+          <div className="mt-5 flex flex-wrap gap-x-4 gap-y-1.5 border-t border-cream/10 pt-4 font-mono text-[10px] tracking-[0.14em] text-faint">
+            <Link href="/refer" className="hover:text-cream">REFERRALS</Link>
+            <Link href="/partner" className="hover:text-cream">PARTNERS</Link>
+            <Link href="/about" className="hover:text-cream">ABOUT</Link>
+            <Link href="/contact" className="hover:text-cream">CONTACT</Link>
+          </div>
         </div>
       </div>
+
+      {/* Bottom Legal Bar */}
       <div className="border-t border-line/60 px-5 py-4">
-        <div className="mx-auto flex max-w-6xl items-center justify-center gap-x-5 gap-y-2 font-mono text-[9px] tracking-[0.16em] text-faint sm:justify-between">
+        <div className="mx-auto flex max-w-6xl items-center justify-center gap-x-5 gap-y-2 font-mono text-[10px] tracking-[0.14em] text-faint sm:justify-between">
           <span className="hidden sm:block">
             PUBLIC LIQUOR-FILING INTEL · REFRESHED DAILY ·{" "}
             <span className="text-amber">9 LIVE MARKETS</span>

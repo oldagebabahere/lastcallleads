@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Building2, Mail, MapPin, Search } from "lucide-react";
-import { and, desc, eq, lte, notLike } from "drizzle-orm";
+import { Building2, MapPin, Search } from "lucide-react";
+import { and, desc, eq, inArray, lte, notLike } from "drizzle-orm";
 import { db } from "@/db";
 import { ensureSchema } from "@/db/bootstrap";
 import { events } from "@/db/schema";
@@ -10,9 +10,9 @@ import SubscribeForm from "@/components/subscribe-form";
 import OutreachKit from "@/components/outreach-kit";
 import { Footer, Nav } from "@/components/ui";
 import { buildBeverageDossier, parseEventMeta } from "@/lib/beverage-intel";
-import { isJunkEntity, scoreFiling } from "@/lib/lead-score";
+import { dedupeKey, isJunkEntity, scoreFiling } from "@/lib/lead-score";
 import { embargoCutoff } from "@/lib/queries";
-import { LIVE_MARKETS } from "@/lib/states";
+import { LIVE_MARKETS, LIVE_STATE_CODES, stateFullName } from "@/lib/states";
 
 export const dynamic = "force-dynamic";
 
@@ -133,21 +133,37 @@ export default async function SamplePage() {
       .where(
         and(
           eq(events.eventType, "NEW_PENDING"),
+          inArray(events.state, LIVE_STATE_CODES),
           notLike(events.licenseKey, "TTB-%"),
           lte(events.occurredAt, embargoCutoff())
         )
       )
       .orderBy(desc(events.occurredAt))
-      .limit(18);
-    rows = (raw as unknown as SampleRow[])
-      .filter((e) => !isJunkEntity(e.tradeName, e.ownerName, e.typeName))
+      .limit(80);
+    const seenSample = new Set<string>();
+    const filteredLive = (raw as unknown as SampleRow[])
+      .filter((e) => {
+        if (isJunkEntity(e.tradeName, e.ownerName, e.typeName)) return false;
+        const m = parseEventMeta(e.payload);
+        if (!m.address) return false;
+        const dk = dedupeKey(e.tradeName ?? e.ownerName, e.city);
+        if (seenSample.has(dk)) return false;
+        seenSample.add(dk);
+        return true;
+      })
+      .sort(
+        (a, b) =>
+          scoreFiling({ eventType: b.eventType, typeName: b.typeName, city: b.city, county: b.county, occurredAt: b.occurredAt }).value -
+          scoreFiling({ eventType: a.eventType, typeName: a.typeName, city: a.city, county: a.county, occurredAt: a.occurredAt }).value
+      )
       .slice(0, 5);
-    if (rows.length > 0) isLiveSample = true;
+    rows = filteredLive;
+    if (rows.length >= 3) isLiveSample = true;
   } catch {
     rows = [];
   }
 
-  const displayRows = rows.length > 0 ? rows : SHOWCASE_EXAMPLES;
+  const displayRows = rows.length >= 3 ? rows : SHOWCASE_EXAMPLES;
 
   const enriched = displayRows
     .map((e) => {
@@ -180,7 +196,7 @@ export default async function SamplePage() {
     .sort((a, b) => b.score.value - a.score.value);
 
   const top = enriched[0];
-  const stateLabel = Array.from(new Set(displayRows.map((r) => r.state))).join(" + ");
+  const stateLabel = Array.from(new Set(displayRows.map((r) => stateFullName(r.state)))).join(" + ");
   const subject = `${displayRows.length} new beverage leads — ${stateLabel}`;
 
   return (
@@ -204,16 +220,19 @@ export default async function SamplePage() {
           <div className="mt-10 overflow-hidden rounded-xl border border-line bg-wine-grad">
             <div className="border-b border-line/70 px-5 py-3.5">
               <div className="flex items-start gap-3">
-                <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-amber/40 bg-amber/10">
-                  <Mail className="h-4 w-4 text-amber" />
-                </span>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src="/brand-logo.webp"
+                  alt="Last Call Leads"
+                  className="mt-0.5 h-9 w-9 shrink-0 rounded-lg border border-amber/45 object-cover"
+                />
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium text-cream">Last Call Leads Alerts</p>
                   <p className="font-mono text-[11px] text-faint">
                     alerts@lastcallleads.com → you@distributor.com
                   </p>
                 </div>
-                <span className="shrink-0 font-mono text-[10px] text-faint">6:30 AM</span>
+                <span className="shrink-0 font-mono text-[10px] text-faint">7:00 AM</span>
               </div>
               <p className="mt-3 font-display text-lg font-medium text-cream">{subject}</p>
             </div>

@@ -41,6 +41,7 @@ export default function BottleStage() {
   const liquidRef = useRef<HTMLDivElement>(null);
   const lenisRef = useRef<Lenis | null>(null);
   const [activeAct, setActiveAct] = useState<string>("act-hero");
+  const [showRail, setShowRail] = useState<boolean>(true);
 
   useEffect(() => {
     const img = imgRef.current;
@@ -210,6 +211,21 @@ export default function BottleStage() {
         if (t.scrollTrigger) triggers.push(t.scrollTrigger);
       });
 
+      // Fade out floating left story rail cleanly once user scrolls past pricing (#act-allocation)
+      // so it NEVER collides with post-dock cards or the Footer wordmark.
+      const allocEl = document.getElementById("act-allocation");
+      if (allocEl) {
+        triggers.push(
+          ScrollTrigger.create({
+            trigger: allocEl,
+            start: "top bottom",
+            end: "bottom 55%",
+            onLeave: () => setShowRail(false),
+            onEnterBack: () => setShowRail(true),
+          })
+        );
+      }
+
       // Act 4 wine pour
       const glass = glassRef.current;
       const stream = streamRef.current;
@@ -317,10 +333,12 @@ export default function BottleStage() {
 
   return (
     <>
-      {/* Left act navigation rail (desktop only) */}
+      {/* Left act navigation rail (desktop only; auto-hides before Footer) */}
       <nav
         aria-label="Story acts"
-        className="fixed left-5 top-1/2 z-40 hidden -translate-y-1/2 flex-col gap-3.5 xl:flex"
+        className={`fixed left-5 top-1/2 z-40 hidden -translate-y-1/2 flex-col gap-3.5 transition-opacity duration-500 xl:flex ${
+          showRail ? "opacity-100" : "pointer-events-none opacity-0"
+        }`}
       >
         {ACTS.map((a) => {
           const isOn = activeAct === a.id;

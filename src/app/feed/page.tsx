@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { and, desc, eq, ilike, inArray, notLike, or } from "drizzle-orm";
+import { and, desc, eq, ilike, inArray, notLike, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { ensureSchema } from "@/db/bootstrap";
 import { events } from "@/db/schema";
@@ -52,6 +52,7 @@ export default async function FeedPage({
     await ensureSchema();
     const conds = [
       notLike(events.licenseKey, "TTB-%"),
+      sql`${events.occurredAt} <= now() + interval '1 day'`,
       cleanState ? eq(events.state, cleanState) : inArray(events.state, LIVE_STATE_CODES),
     ];
     if (signal === "FILED") conds.push(eq(events.eventType, "NEW_PENDING"));
