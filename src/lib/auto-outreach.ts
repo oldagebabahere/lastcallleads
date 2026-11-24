@@ -6,7 +6,7 @@
 //      same sender mailbox (only if prospect has NOT subscribed yet), doubling reply/trial rates
 //   4) Real local proof — every cold email shows 3 freshly filed bars in the prospect's own state
 //   5) Permanent dedupe in `outreach_sent` (dry runs NEVER block real prospects later)
-import { and, desc, eq, gt, inArray, isNotNull, lt, ne, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNotNull, ne, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { ensureSchema } from "@/db/bootstrap";
 import { emailLog, events, outreachSent, prospects, subscribers } from "@/db/schema";
@@ -14,8 +14,9 @@ import { BRAND } from "./brand";
 import { PUBLIC_CONFIG } from "./public-config";
 import { findRealEmail, mapLimit } from "./email-finder";
 import { harvestDistributors } from "./distributors";
-import { harvestProspects } from "./prospects";
+import { harvestProspects, isJunkProspect } from "./prospects";
 import { runByState } from "./ingest-aggregator";
+import { sendTelegramOwner } from "./notify";
 import {
   getOutreachSmtpAccounts,
   isOutreachTransportConfigured,
@@ -321,9 +322,10 @@ export async function runAutoOutreach(
   let dryRun = 0;
 
   // =========================================================================
-  // PHASE 1 — WARM DAY-3 FOLLOW-UPS (doubles B2B reply & free-trial signups!)
+  // PHASE 1 — WARM DAY-3 & DAY-7 FOLLOW-UPS (2-3x B2B replies & free trials!)
   // =========================================================================
   const threeDaysAgo = new Date(Date.now() - 3 * 86_400_000);
+  const fourDaysAgo = new Date(Date.now() - 4 * 86_400_000);
   const followupBudget = Math.max(2, Math.floor(dailyCap / 2));
   const dueFollowups = await db
     .select()
@@ -331,11 +333,14 @@ export async function runAutoOutreach(
     .where(
       and(
         eq(outreachSent.status, "sent"),
-        eq(outreachSent.followupCount, 0),
-        lt(outreachSent.sentAt, threeDaysAgo)
+        sql`(
+          (${outreachSent.followupCount} = 0 AND ${outreachSent.sentAt} < ${threeDaysAgo})
+          OR
+          (${outreachSent.followupCount} = 1 AND ${outreachSent.followupSentAt} IS NOT NULL AND ${outreachSent.followupSentAt} < ${fourDaysAgo})
+        )`
       )
     )
-    .orderBy(outreachSent.sentAt)
+    .orderBy(outreachSent.followupCount, outreachSent.sentAt)
     .limit(followupBudget);
 
   if (dueFollowups.length > 0) {
@@ -351,11 +356,21 @@ export async function runAutoOutreach(
         // Already converted to trial/paid — mark done so we never follow up again!
         await db
           .update(outreachSent)
-          .set({ followupCount: 1, followupSentAt: new Date() })
+          .set({ followupCount: 2, followupSentAt: new Date() })
           .where(eq(outreachSent.id, row.id));
         continue;
       }
 
+      // Never waste follow-up quota on legacy junk prospects sent before the quality filter
+      if (isJunkProspect(row.company, null, row.category)) {
+        await db
+          .update(outreachSent)
+          .set({ followupCount: 2, followupSentAt: new Date() })
+          .where(eq(outreachSent.id, row.id));
+        continue;
+      }
+
+      const nextTouch = row.followupCount + 1;
       const rowStateName = stateFullName(row.state);
       let barLine = `several new bars & restaurants in ${rowStateName}`;
       try {
@@ -372,7 +387,18 @@ export async function runAutoOutreach(
       const origSubj =
         row.lastSubject || `New bars just filed for liquor permits in ${rowStateName}`;
       const subject = origSubj.toLowerCase().startsWith("re:") ? origSubj : `Re: ${origSubj}`;
-      const html = `<!doctype html><html><body style="font-family:Arial,sans-serif;color:#1b1b1b;line-height:1.65;max-width:580px;margin:0 auto;padding:20px">
+      const isFinalTouch = nextTouch >= 2;
+      const html = isFinalTouch
+        ? `<!doctype html><html><body style="font-family:Arial,sans-serif;color:#1b1b1b;line-height:1.65;max-width:580px;margin:0 auto;padding:20px">
+        <p>Hi ${esc(row.company)} team,</p>
+        <p>Last quick note from me — if you cover a specific city or ZIP territory in ${esc(rowStateName)}, just hit reply with your city and I&rsquo;ll send over 5 freshly filed bars &amp; restaurants in your exact route for free.</p>
+        <p>Or preview this week&rsquo;s live filings directly here: <a href="${base}/map?state=${encodeURIComponent(row.state)}" style="color:#8b2c43;font-weight:700">${esc(rowStateName)} live territory map →</a> &nbsp;|&nbsp; <a href="${base}/#pricing" style="color:#8b2c43;font-weight:700">7-day free trial (no card) →</a></p>
+        <p>Best,<br/>${esc(PUBLIC_CONFIG.founderName || BRAND.name)}</p>
+        <p style="margin-top:20px;font-size:11px;color:#777">
+          This is my final follow-up — reply &ldquo;stop&rdquo; anytime. ${esc(PUBLIC_CONFIG.legalName)}${PUBLIC_CONFIG.postalAddress ? ` · ${esc(PUBLIC_CONFIG.postalAddress)}` : ""}
+        </p>
+      </body></html>`
+        : `<!doctype html><html><body style="font-family:Arial,sans-serif;color:#1b1b1b;line-height:1.65;max-width:580px;margin:0 auto;padding:20px">
         <p>Hi ${esc(row.company)} team,</p>
         <p>Quick bump in case this got buried — <strong>${esc(barLine)}</strong> are moving through state licensing right now (typically 60–90 days before doors open).</p>
         <p>Want me to activate a free 7-day ${esc(rowStateName)} territory feed for you (no card needed)? Every morning you get street address, legal LLC, beverage program fit, and a 1-click Google Maps driving route for field drop-bys.</p>
@@ -403,7 +429,7 @@ export async function runAutoOutreach(
         followupsSent++;
         await db
           .update(outreachSent)
-          .set({ followupCount: 1, followupSentAt: new Date() })
+          .set({ followupCount: nextTouch, followupSentAt: new Date() })
           .where(eq(outreachSent.id, row.id));
       } else if (res.status === "dry_run") {
         dryRun++;
@@ -413,7 +439,7 @@ export async function runAutoOutreach(
         .insert(emailLog)
         .values({
           toEmail: row.email,
-          subject: `[FOLLOWUP] ${subject}`,
+          subject: `[FOLLOWUP #${nextTouch}] ${subject}`,
           status: res.status,
           detail: res.detail,
           eventCount: 1,
@@ -470,9 +496,14 @@ export async function runAutoOutreach(
   }
 
   const TARGET_CATEGORIES = ["distributor", "brewery", "beverage", "insurance", "attorney"];
-  const candidateLimit = Math.min(24, Math.max(8, freshBudget * 3));
-  const loadCandidates = () =>
-    db
+  const candidateLimit = Math.min(36, Math.max(16, freshBudget * 4));
+  const rotationSalt = `${new Date().toISOString().slice(0, 10)}-${new Date().getUTCHours()}`;
+
+  // Prioritize highest-converting hospitality buyers FIRST (distributors -> craft breweries ->
+  // beverage suppliers -> commercial insurance -> attorneys), exclude companies already sent,
+  // and rotate deterministically so outreach NEVER stalls re-scanning the same 24 rows!
+  const loadCandidates = async () => {
+    const raw = await db
       .select()
       .from(prospects)
       .where(
@@ -480,19 +511,42 @@ export async function runAutoOutreach(
           eq(prospects.state, state),
           inArray(prospects.category, TARGET_CATEGORIES),
           isNotNull(prospects.website),
-          ne(prospects.website, "")
+          ne(prospects.website, ""),
+          sql`NOT EXISTS (
+            SELECT 1 FROM outreach_sent os
+            WHERE lower(os.company) = lower(${prospects.name})
+              AND os.status = 'sent'
+          )`
         )
       )
-      .orderBy(desc(prospects.id))
-      .limit(candidateLimit);
+      .orderBy(
+        sql`CASE ${prospects.category}
+          WHEN 'distributor' THEN 1
+          WHEN 'brewery' THEN 2
+          WHEN 'beverage' THEN 3
+          WHEN 'insurance' THEN 4
+          ELSE 5
+        END`,
+        sql`md5(${prospects.id}::text || ${rotationSalt})`
+      )
+      .limit(candidateLimit * 2);
+
+    return raw
+      .filter((c) => !isJunkProspect(c.name, c.website, c.category))
+      .slice(0, candidateLimit);
+  };
 
   let candidates = await loadCandidates();
 
-  // Zero-touch auto-harvest: if this state has fewer than 8 prospects with websites,
-  // pull ONE fast category from OpenStreetMap per pulse (keeps well inside Vercel 60s limit!).
-  if (candidates.length < 8) {
-    const harvestOrder = ["brewery", "beverage", "insurance", "attorney"];
-    const pickedCat = harvestOrder[new Date().getUTCHours() % harvestOrder.length];
+  // Always auto-harvest high-intent breweries & beverage distributors if a state lacks them
+  // (even when legacy insurance/attorney rows exist) so outreach targets real alcohol buyers!
+  const highIntentCount = candidates.filter((c) =>
+    ["distributor", "brewery", "beverage"].includes(c.category)
+  ).length;
+
+  if (highIntentCount < 6 || candidates.length < 8) {
+    const priorityOrder = ["brewery", "distributor", "beverage"];
+    const pickedCat = priorityOrder[new Date().getUTCHours() % priorityOrder.length];
     await Promise.race([
       harvestProspects(state, [pickedCat]).catch(() => undefined),
       new Promise((r) => setTimeout(r, 18_000)),
@@ -588,13 +642,23 @@ export async function runAutoOutreach(
       aiOpener ||
       `Quick heads-up — here are ${sampleBars.length} new venues that just filed official liquor license applications in ${fullState} (typically 60–90 days before doors open):`;
 
-    const subject = `${sampleBars.length} new bars just filed in ${fullState} (${target.city ?? fullState} territory)`;
+    const pitchTail =
+      target.category === "insurance"
+        ? `We sweep the official ${esc(fullState)} liquor registry every morning so commercial brokers reach new bar &amp; restaurant LLCs right before their landlord asks for a Liquor Liability COI — complete with street address, legal entity, and 1-click CRM CSV.`
+        : target.category === "attorney"
+          ? `We sweep the official ${esc(fullState)} liquor registry every morning so hospitality attorneys see pending filings, relocations, and transfers by county the day they post.`
+          : `We sweep the official ${esc(fullState)} liquor registry every morning so craft beverage &amp; distribution reps lock in tap handles, back-bar shelf space, and opening orders 60–90 days early — with premises address, legal LLC, 1-click Google Maps route, and 19-column CRM CSV.`;
+
+    const subject =
+      target.category === "insurance"
+        ? `${sampleBars.length} new ${fullState} bar filings needing Liquor Liability COIs`
+        : `${sampleBars.length} new bars just filed in ${fullState} (${target.city ?? fullState} territory)`;
     const html = `<!doctype html><html><body style="font-family:Arial,sans-serif;color:#1b1b1b;line-height:1.65;max-width:580px;margin:0 auto;padding:20px">
       <p>Hi ${esc(target.company)} team,</p>
       <p>${esc(openerParagraph)}</p>
       <ul style="padding-left:18px">${barsListHtml}</ul>
-      <p>We sweep the official ${esc(fullState)} registry every morning and email reps the full dossier — premises street address, legal LLC, beverage program fit, a 1-click Google Maps driving route, and a 19-column CRM CSV.</p>
-      <p><a href="${base}/sample" style="color:#8b2c43;font-weight:700">See a live sample dossier →</a> &nbsp;|&nbsp; <a href="${base}/#pricing" style="color:#8b2c43;font-weight:700">Start a free 7-day trial (no card) →</a></p>
+      <p>${pitchTail}</p>
+      <p><a href="${base}/sample" style="color:#8b2c43;font-weight:700">See a live sample dossier →</a> &nbsp;|&nbsp; <a href="${base}/map?state=${encodeURIComponent(state)}" style="color:#8b2c43;font-weight:700">Preview ${esc(fullState)} map →</a> &nbsp;|&nbsp; <a href="${base}/#pricing" style="color:#8b2c43;font-weight:700">Start 7-day free trial (no card) →</a></p>
       <p>Best,<br/>${esc(PUBLIC_CONFIG.founderName || BRAND.name)}<br/>${esc(BRAND.name)}</p>
       <p style="margin-top:24px;font-size:11px;color:#777">
         Reply &ldquo;stop&rdquo; anytime and I will never email again. ${esc(PUBLIC_CONFIG.legalName)}${PUBLIC_CONFIG.postalAddress ? ` · ${esc(PUBLIC_CONFIG.postalAddress)}` : ""}
@@ -646,6 +710,12 @@ export async function runAutoOutreach(
         eventCount: sampleBars.length,
       })
       .catch(() => undefined);
+  }
+
+  if (failedAccounts.size > 0) {
+    await sendTelegramOwner(
+      `⚠️ Outreach SMTP Failover Notice\nSkipped unhealthy mailbox(es): ${[...failedAccounts].join(", ")}\nSystem automatically failed over to healthy accounts (${sent} fresh + ${followupsSent} follow-ups sent).`
+    ).catch(() => undefined);
   }
 
   return {

@@ -6,7 +6,7 @@ import { db } from "@/db";
 import { ensureSchema } from "@/db/bootstrap";
 import { prospects } from "@/db/schema";
 import { adminKeySet, isAdminKey } from "@/lib/auth";
-import { PROSPECT_CATEGORIES } from "@/lib/prospects";
+import { isJunkProspect, PROSPECT_CATEGORIES } from "@/lib/prospects";
 import { LIVE_STATE_CODES, stateFullName } from "@/lib/states";
 import { desc, inArray, sql } from "drizzle-orm";
 
@@ -60,11 +60,14 @@ export default async function ProspectsPage({
     .orderBy(desc(sql`count(*)`))
     .limit(15);
 
-  const recent = await db
+  const recentRaw = await db
     .select()
     .from(prospects)
     .orderBy(desc(prospects.firstSeenAt))
-    .limit(25);
+    .limit(80);
+  const recent = recentRaw
+    .filter((r) => !isJunkProspect(r.name, r.website, r.category))
+    .slice(0, 25);
 
   const label = (c: string) =>
     PROSPECT_CATEGORIES.find((x) => x.id === c)?.label ?? c;
@@ -72,14 +75,14 @@ export default async function ProspectsPage({
   return (
     <main className="min-h-screen px-5 pb-20 pt-24">
       <div className="mx-auto max-w-6xl">
-        <p className="eyebrow">[ Prospect Finder · free & unlimited ]</p>
+        <p className="eyebrow">[ B2B Buyer Pipeline · Auto-Filtered · 9 Live Markets ]</p>
         <h1 className="font-display mt-4 text-3xl font-medium text-cream">
-          Tumhare customers ka daily list
+          Verified B2B Outreach Prospects
         </h1>
         <p className="mt-2 max-w-2xl text-sm leading-relaxed text-cream/70">
-          Craft breweries, wineries, beverage suppliers, hospitality attorneys &amp; liquor
-          insurance agencies across our 9 verified live markets. Machine khud bhar ti hai — ya
-          neeche kisi bhi state pe click karke turant harvest karo aur CSV download karo.
+          Beverage distributors, craft breweries, wineries, independent liquor insurance brokers &amp;
+          hospitality attorneys across all 9 live states. Auto-filtered to block consumer car/home/title
+          insurance chains and non-hospitality lawyers. Outreach prioritizes distributors &amp; breweries first.
         </p>
 
         {/* run buttons */}

@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { ensureSchema } from "@/db/bootstrap";
 import { prospects } from "@/db/schema";
 import { isAdminKey } from "@/lib/auth";
+import { isJunkProspect } from "@/lib/prospects";
 import { and, desc, eq, sql } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
@@ -37,6 +38,7 @@ export async function GET(req: Request) {
       .limit(20000);
     const lines = ["category,name,phone,website,address,city,state"];
     for (const r of rows) {
+      if (isJunkProspect(r.name, r.website, r.category)) continue;
       lines.push(
         [r.category, r.name, r.phone, r.website, r.address, r.city, r.state]
           .map(esc)

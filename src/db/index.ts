@@ -28,14 +28,20 @@ function createHostedPool(url: string): Pool {
   // Neon, Railway, and standard Postgres without exhausting serverless client limits.
   const isHostedCloud =
     /supabase\.(co|com)|neon\.tech|render\.com|amazonaws\.com|sslmode=require/i.test(url);
-  return new Pool({
+  const p = new Pool({
     connectionString: url,
     max: 5,
     idleTimeoutMillis: 20_000,
     connectionTimeoutMillis: 10_000,
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 10_000,
     allowExitOnIdle: true,
     ...(isHostedCloud ? { ssl: { rejectUnauthorized: false } } : {}),
   });
+  // Self-healing guard: absorb idle backend disconnects so pg Pool cleanly opens
+  // a fresh socket on the next query instead of crashing the serverless worker.
+  p.on("error", () => undefined);
+  return p;
 }
 
 export const pool: Pool = databaseUrl

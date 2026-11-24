@@ -10,14 +10,16 @@
 import { and, desc, eq } from "drizzle-orm";
 import { db, pool } from "@/db";
 import { ingestRuns, sourceHealth } from "@/db/schema";
-import { Resend } from "resend";
 import { fetchSocrata, fetchWithRetry } from "@/lib/sources";
 import { alertFrom } from "@/lib/email";
+import { isMailTransportConfigured, sendTransactionalMail } from "@/lib/mailer";
+import { sendTelegramOwner } from "@/lib/notify";
 import { BRAND } from "@/lib/brand";
 
 export const PAUSE_AFTER = 3;
 const STALE_HOURS = 48;
-const REPROBE_DAYS = 7;
+// Self-heal fast: re-probe paused government feeds every 12 hours instead of waiting 7 days!
+const REPROBE_HOURS = 12;
 
 export type RunResult = {
   label: string;
@@ -36,37 +38,41 @@ type CountRow = { n: number | string };
 // ---------- email ----------
 
 export async function sendOpsAlert(subject: string, body: string): Promise<boolean> {
-  const opsEmail = process.env.OPS_EMAIL;
-  const resendKey = process.env.RESEND_API_KEY;
+  const opsEmail = (process.env.OPS_EMAIL ?? process.env.SMTP_USER ?? "").trim();
+  const plainSummary = body.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 320);
+
+  // Instant Telegram watchdog alert (runs even if email providers hiccup!)
+  await sendTelegramOwner(`🛡️ ${BRAND.name} PourWatch\n${subject}\n${plainSummary}`).catch(
+    () => undefined
+  );
+
   const html = `<div style="font-family:Arial,sans-serif;max-width:620px;margin:auto;padding:24px">
     <h2>${BRAND.name} PourWatch</h2>
     ${body}
     <p style="color:#666;font-size:12px">Automated source-health alert. Paused sources stop alerting;
-    PourWatch re-probes them weekly and resumes automatically when they recover.</p>
+    PourWatch re-probes and auto-heals them every 12 hours and resumes automatically when they recover.</p>
   </div>`;
   try {
-    if (opsEmail && resendKey) {
-      const resend = new Resend(resendKey);
-      const res = await resend.emails.send({
+    if (opsEmail && isMailTransportConfigured()) {
+      const res = await sendTransactionalMail({
         from: alertFrom(),
         to: opsEmail,
         subject,
         html,
       });
-      if (res.error) throw new Error(String(res.error));
       await pool
         .query(
           `INSERT INTO email_log (to_email, subject, status, detail, event_count)
-           VALUES ($1, $2, 'sent', 'pourwatch alert', 0)`,
-          [opsEmail, subject]
+           VALUES ($1, $2, $3, $4, 0)`,
+          [opsEmail, subject, res.status, `pourwatch: ${res.detail}`.slice(0, 180)]
         )
         .catch(() => undefined);
-      return true;
+      return res.status === "sent";
     }
     await pool.query(
       `INSERT INTO email_log (to_email, subject, status, detail, event_count)
        VALUES ('ops@internal', $1, 'logged', $2, 0)`,
-      [subject, body.replace(/<[^>]+>/g, " ").slice(0, 400)]
+      [subject, plainSummary]
     );
     return true;
   } catch {
@@ -334,10 +340,10 @@ export async function sweepStale(
   return bumped;
 }
 
-/** Paused sources due for their weekly re-probe (or all of them). */
+/** Paused sources due for their self-healing re-probe (every 12h, or all). */
 export async function reprobeDue(all = false): Promise<HealthRow[]> {
   const rows = await db.select().from(sourceHealth).where(eq(sourceHealth.status, "paused"));
-  const cutoff = Date.now() - REPROBE_DAYS * 86_400_000;
+  const cutoff = Date.now() - REPROBE_HOURS * 3_600_000;
   return rows.filter((r) => {
     if (all) return true;
     const probed = r.lastProbeAt ? new Date(r.lastProbeAt).getTime() : 0;

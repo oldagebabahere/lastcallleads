@@ -69,6 +69,9 @@ export async function runMaintenance(): Promise<MaintenanceReport> {
           DELETE FROM prospects
           WHERE state NOT IN (${liveListSql})
              OR category = 'bar'
+             OR (category = 'insurance' AND name ~* '(state\\s*farm|allstate|geico|progressive|farmers\\s+ins|liberty\\s+mutual|fred\\s*loya|a-?max|pronto\\s+ins|freeway\\s+ins|acceptance\\s+ins|direct\\s+auto|nationwide|usaa|stewart\\s+title|first\\s+american|title\\s+(co|company|agency|ins|group)|auto\\s+ins|car\\s+ins|bail\\s+bond|edward\\s+jones|aflac|medicare|dental|life\\s+ins|health\\s+ins)')
+             OR (category = 'attorney' AND name ~* '(personal\\s+injury|accident|divorce|family\\s+law|criminal|immigration|bankruptcy|probate|workers\\s*comp|public\\s+defender|legal\\s+aid)')
+             OR (category = 'beverage' AND name ~* '(walmart|target|costco|kroger|publix|safeway|walgreens|cvs|7-?eleven|circle\\s+k|total\\s+wine|bevmo)')
           RETURNING 1
         ) SELECT count(*)::int AS n FROM deleted
       `)

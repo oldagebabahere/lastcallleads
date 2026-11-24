@@ -15,6 +15,7 @@ import { runDigest } from "@/lib/digest";
 import { runReceiptsIngest } from "@/lib/ingest-receipts";
 import { buildSocialPost, runTrialTips } from "@/lib/owner-tasks";
 import { runAutoOutreach } from "@/lib/auto-outreach";
+import { harvestProspects, todaysState } from "@/lib/prospects";
 import { isAutoOutreachActive } from "@/lib/mailer";
 import { sendTelegramOwner } from "@/lib/notify";
 
@@ -79,15 +80,26 @@ export async function GET(req: Request) {
     }));
   }
 
-  // 5) Automatic PourWatch self-healing (auto-recovers any paused portal — zero manual clicks!)
+  // 5) Automatic PourWatch self-healing (re-probes paused feeds every 12h + Socrata catalog replacement!)
   const healed =
-    Date.now() - started < 42_000
+    Date.now() - started < 44_000
       ? await reprobeAndHealPaused(false).catch(() => [])
       : [];
 
+  // 5.5) Zero-touch prospect pipeline growth: rotate across ALL 9 live states daily
+  //      pulling high-value breweries & beverage distributors automatically when budget allows.
+  if (Date.now() - started < 40_000) {
+    const harvestSt = todaysState();
+    const harvestCat = dow % 2 === 0 ? "brewery" : "distributor";
+    await Promise.race([
+      harvestProspects(harvestSt, [harvestCat]).catch(() => undefined),
+      new Promise((r) => setTimeout(r, 10_000)),
+    ]);
+  }
+
   // 6) Autonomous zero-mazdoori B2B outreach (auto-on once OUTREACH_SMTP_ACCOUNTS or AUTO_OUTREACH_ENABLED=true is set).
   let autoOutreach: Awaited<ReturnType<typeof runAutoOutreach>> | null = null;
-  if (isAutoOutreachActive() && Date.now() - started < 46_000) {
+  if (isAutoOutreachActive() && Date.now() - started < 48_000) {
     autoOutreach = await runAutoOutreach({ limit: 8 }).catch((e) => ({
       ok: false,
       state: "ERR",

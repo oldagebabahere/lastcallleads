@@ -13,12 +13,69 @@ import { and, eq, notInArray } from "drizzle-orm";
 import { LIVE_STATE_CODES } from "@/lib/states";
 
 export const PROSPECT_CATEGORIES = [
-  { id: "brewery", label: "Craft breweries & wineries", tag: '["craft"~"brewery|winery|distillery"]' },
-  { id: "beverage", label: "Beverage & wine suppliers", tag: '["shop"~"alcohol|wine|beverages"]' },
-  { id: "insurance", label: "Commercial insurance agents", tag: '["office"="insurance"]' },
-  { id: "attorney", label: "Hospitality attorneys", tag: '["office"="lawyer"]' },
-  { id: "bar", label: "Bars (end leads)", tag: '["amenity"="bar"]' },
+  { id: "distributor", label: "Beverage & food distributors", tag: '["wholesale"~"beverages|alcohol|wine|beer|food"]' },
+  { id: "brewery", label: "Craft breweries, wineries & distilleries", tag: '["craft"~"brewery|winery|distillery"]' },
+  { id: "beverage", label: "Independent wine & spirits shops", tag: '["shop"~"wine|alcohol|beverages"]' },
+  { id: "insurance", label: "Commercial liquor insurance", tag: '["office"="insurance"]' },
+  { id: "attorney", label: "Hospitality & business attorneys", tag: '["office"="lawyer"]' },
 ] as const;
+
+// Strict B2B quality filter — blocks consumer car/home/title insurance chains
+// (State Farm, Allstate, Fred Loya, A-MAX, Stewart Title), divorce/PI lawyers,
+// and big-box grocery/gas chains so outreach quota ONLY hits real hospitality buyers.
+const JUNK_INSURANCE_NAME_RE =
+  /\b(state\s*farm|allstate|geico|progressive|farmers\s+ins|liberty\s+mutual|fred\s*loya|a-?max|pronto\s+ins|freeway\s+ins|acceptance\s+ins|direct\s+auto|nationwide|usaa|aaa\b|american\s+family|country\s+financial|shelter\s+ins|farm\s+bureau|metlife|prudential|new\s+york\s+life|northwestern\s+mutual|edward\s+jones|aflac|blue\s*cross|humana|united\s*health|medicare|medicaid|dental|vision\s+ins|title\s+(co|company|agency|ins|group|services)|stewart\s+title|first\s+american|old\s+republic|chicago\s+title|fidelity\s+national|bail\s+bond|auto\s+ins|car\s+ins|sr-?22|life\s+ins|health\s+ins|funeral|burial|homeowners?\s+ins|renters?\s+ins|pet\s+ins|veronica'?s\s+ins|la\s+familia\s+auto|fiesta\s+auto|adriana'?s\s+ins|seguros?\s+de\s+auto|seguro\s+barato)\b/i;
+
+const JUNK_ATTORNEY_NAME_RE =
+  /\b(personal\s+injury|injury\s+law|accident|car\s+wreck|truck\s+accident|divorce|family\s+law|criminal\s+defense|criminal\s+law|\bdui\b|\bdwi\b|immigration|bankruptcy|probate|estate\s+plan|wills?\s*&?\s*trusts?|workers?\s*comp|social\s+security|disability|patent|trademark|public\s+defender|district\s+attorney|county\s+attorney|city\s+attorney|legal\s+aid|child\s+support|adoption|medical\s+malpractice|slip\s+and\s+fall|traffic\s+ticket|expungement|asylum|deportation)\b/i;
+
+const JUNK_BEVERAGE_NAME_RE =
+  /\b(walmart|target|costco|sam'?s\s+club|kroger|h-?e-?b\b|publix|safeway|albertsons|walgreens|cvs\b|7-?eleven|circle\s+k|shell\b|chevron|exxon|mobil\b|wawa\b|sheetz|quiktrip|buc-?ee|trader\s+joe|whole\s+foods|aldi\b|lidl\b|dollar\s+general|dollar\s+tree|family\s+dollar|total\s+wine|bevmo|spec'?s\b|twin\s+liquors|goody\s+goody|abc\s+fine\s+wine|meijer|wegmans|giant\s+eagle|stop\s*&\s*shop|food\s+lion|piggly\s+wiggly|winn-?dixie|ralphs|vons|jewel-?osco|speedway|racetrac|loves\s+travel|pilot\s+flying)\b/i;
+
+const JUNK_DOMAINS = [
+  "statefarm.com", "allstate.com", "farmers.com", "geico.com", "progressive.com",
+  "libertymutual.com", "fredloya.com", "amaxinsurance.com", "prontoinsurance.com",
+  "freewayinsurance.com", "acceptanceinsurance.com", "directauto.com",
+  "nationwide.com", "usaa.com", "aaa.com", "amfam.com", "edwardjones.com",
+  "aflac.com", "stewart.com", "firstam.com", "oldrepublictitle.com", "fnf.com",
+  "countryfinancial.com", "shelterinsurance.com", "metlife.com", "prudential.com",
+  "newyorklife.com", "northwesternmutual.com", "walmart.com", "target.com",
+  "costco.com", "kroger.com", "heb.com", "publix.com", "safeway.com", "cvs.com",
+  "walgreens.com", "7-eleven.com", "totalwine.com", "bevmo.com", "facebook.com",
+  "instagram.com", "yelp.com", "linkedin.com", "yellowpages.com", "google.com",
+];
+
+export function isJunkProspect(
+  name: string | null | undefined,
+  website: string | null | undefined,
+  category: string | null | undefined
+): boolean {
+  const n = (name ?? "").trim();
+  const cat = (category ?? "").toLowerCase();
+  if (!n || n.length < 3) return true;
+
+  if (website) {
+    try {
+      const host = new URL(/^https?:\/\//i.test(website) ? website : `https://${website}`)
+        .hostname.toLowerCase()
+        .replace(/^www\./, "");
+      if (host.endsWith(".gov") || host.endsWith(".edu") || host.endsWith(".mil") || host.endsWith(".ca")) {
+        return true;
+      }
+      if (JUNK_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`))) {
+        return true;
+      }
+    } catch {
+      // malformed URL handled elsewhere
+    }
+  }
+
+  if (cat === "insurance" && JUNK_INSURANCE_NAME_RE.test(n)) return true;
+  if (cat === "attorney" && JUNK_ATTORNEY_NAME_RE.test(n)) return true;
+  if (cat === "beverage" && JUNK_BEVERAGE_NAME_RE.test(n)) return true;
+  if (cat === "bar") return true;
+  return false;
+}
 
 // Approximate bounding boxes (south, west, north, east) — bbox queries are
 // ~10x faster than area queries on Overpass. Edge overlap with neighbours
@@ -134,7 +191,13 @@ export async function harvestProspects(
           const q = `[out:json][timeout:35];area["ISO3166-2"="US-${state}"]->.st;(node${cat.tag}(${s},${w},${n},${e})(area.st);way${cat.tag}(${s},${w},${n},${e})(area.st););out center 1500;`;
           const els = await overpass(q);
           const rows = els
-            .filter((el) => el.tags?.name && (el.tags?.website || el.tags?.["contact:website"] || el.tags?.phone || el.tags?.["contact:phone"]))
+            .filter((el) => {
+              const name = el.tags?.name;
+              const site = el.tags?.website ?? el.tags?.["contact:website"] ?? null;
+              const phone = el.tags?.phone ?? el.tags?.["contact:phone"] ?? null;
+              if (!name || (!site && !phone)) return false;
+              return !isJunkProspect(name, site, cat.id);
+            })
             .map((el) => ({
               category: cat.id,
               osmKey: `${el.type}/${el.id}`,

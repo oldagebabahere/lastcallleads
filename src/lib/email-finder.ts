@@ -6,9 +6,9 @@ import net from "node:net";
 
 const PAGES = ["", "/contact", "/contact-us", "/about"];
 const BAD_LOCAL =
-  /^(no-?reply|donotreply|do-not-reply|example|test|sentry|wixpress|webmaster|postmaster|abuse|privacy|unsubscribe|mailer-daemon|phishing|spam|security|fraud|report|reports|legal|compliance|hr|careers|jobs|recruiting|press|media|billing|accounting|noc|dmca|copyright|ethics|whistleblower|investor|investors|ir|claims|complaints|optout|opt-out|support-?abuse|admin-?abuse)$/i;
+  /^(no-?reply|donotreply|do-not-reply|example|test|sentry|wixpress|webmaster|postmaster|abuse|privacy|unsubscribe|mailer-daemon|phishing|spam|security|fraud|report|reports|legal|compliance|hr|careers|jobs|recruiting|press|media|billing|accounting|noc|dmca|copyright|ethics|whistleblower|investor|investors|ir|claims|complaints|optout|opt-out|support-?abuse|admin-?abuse|customerservice|customer-?service|agencyservices|clientservice|clientsupport|helpdesk|supportdesk|escrow|closing|closings|title|underwriting|policy|policies|auto|claimsdept|accessibility|ada)$/i;
 const GOOD_LOCAL =
-  /^(sales|contact|info|office|hello|quotes?|admin|service|support|inquiries|inquiry|orders)$/i;
+  /^(sales|wholesale|distribution|distributor|commercial|hospitality|quotes?|newbusiness|partnerships|orders|contact|info|office|hello|inquiries|inquiry)$/i;
 
 function isPrivateIp(ip: string): boolean {
   if (net.isIPv4(ip)) {
