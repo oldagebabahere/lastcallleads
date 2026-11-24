@@ -1,7 +1,8 @@
 import { db } from "@/db";
 import { sourceHealth } from "@/db/schema";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { dodoConfigured } from "@/lib/dodo";
+import { ALL_STATE_SOURCES } from "@/lib/ingest-aggregator";
 import {
   getOutreachSmtpAccounts,
   isAutoOutreachActive,
@@ -15,6 +16,7 @@ export async function GET() {
   let dbOk = false;
   let pausedSources = 0;
   let lastIngestHoursAgo: number | null = null;
+  const activeLabels = ALL_STATE_SOURCES.map((s) => s.label);
   try {
     await db.execute(sql`select 1`);
     dbOk = true;
@@ -22,11 +24,17 @@ export async function GET() {
       db
         .select({ n: sql<number>`count(*)::int` })
         .from(sourceHealth)
-        .where(eq(sourceHealth.status, "paused"))
+        .where(
+          and(
+            eq(sourceHealth.status, "paused"),
+            inArray(sourceHealth.source, activeLabels)
+          )
+        )
         .catch(() => [{ n: 0 }]),
       db
         .select({ lastOk: sql<Date | string | null>`max(${sourceHealth.lastOkAt})` })
         .from(sourceHealth)
+        .where(inArray(sourceHealth.source, activeLabels))
         .catch(() => [{ lastOk: null }]),
     ]);
     pausedSources = pausedRow[0]?.n ?? 0;

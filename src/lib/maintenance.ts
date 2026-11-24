@@ -82,6 +82,15 @@ export async function runMaintenance(): Promise<MaintenanceReport> {
     Number(legacyEvt.rows[0]?.n ?? 0) +
     Number(legacyPros.rows[0]?.n ?? 0);
 
+  const activeSourceListSql = ALL_STATE_SOURCES.map(
+    (s) => `'${s.label.replace(/'/g, "''")}'`
+  ).join(", ");
+  await pool
+    .query(
+      `DELETE FROM source_health WHERE source NOT IN (${activeSourceListSql})`
+    )
+    .catch(() => undefined);
+
   const oldRuns = await pool.query<CountRow>(`
     WITH deleted AS (
       DELETE FROM ingest_runs
