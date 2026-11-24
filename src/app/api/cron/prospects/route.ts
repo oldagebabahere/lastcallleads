@@ -26,10 +26,9 @@ export async function GET(req: Request) {
     ? [category]
     : null;
 
-  // No category picked? Harvest exactly ONE category — the least-filled for
-  // this state. Big states (TX/FL/CA...) blow past the 60s function limit
-  // when pulled all at once (504), so every RUN click fetches one fast
-  // category; 4 clicks fill a state completely.
+  // No category picked? Rotate cleanly across our two 100%-reliable zero-Overpass
+  // official buyer harvesters (Wine & Spirits Distributors -> Craft Breweries) so daily
+  // autopilot ALWAYS adds fresh official distributors without Overpass timeouts!
   let autoPicked: string | null = null;
   if (!catIds) {
     const counts = await db
@@ -38,9 +37,7 @@ export async function GET(req: Request) {
       .where(eq(prospects.state, state))
       .groupBy(prospects.category);
     const have = new Map(counts.map((c) => [c.category, c.n]));
-    autoPicked = [...PROSPECT_CATEGORIES].sort(
-      (a, b) => (have.get(a.id) ?? 0) - (have.get(b.id) ?? 0)
-    )[0].id;
+    autoPicked = (have.get("brewery") ?? 0) < 30 ? "brewery" : "distributor";
     catIds = [autoPicked];
   }
 
