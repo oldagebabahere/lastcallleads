@@ -25,8 +25,35 @@ type DodoEvent = {
     subscription_id?: string;
     customer_id?: string;
     payment_id?: string;
+    product_id?: string;
+    product_cart?: { product_id?: string; quantity?: number }[];
+    total_amount?: number;
+    currency?: string;
   };
 };
+
+function getLastCallProductIds(): Set<string> {
+  const ids = [
+    process.env.DODO_PRODUCT_ID,
+    process.env.DODO_PRODUCT_ID_SOLO,
+    process.env.DODO_PRODUCT_ID_PRO,
+    process.env.DODO_PRODUCT_SOLO,
+    process.env.DODO_PRODUCT_PRO,
+    process.env.DODO_PRODUCT_ID_ENTERPRISE,
+  ]
+    .map((x) => (x ?? "").trim())
+    .filter(Boolean);
+  return new Set(ids);
+}
+
+function extractEventProductIds(data: NonNullable<DodoEvent["data"]>): string[] {
+  const out: string[] = [];
+  if (data.product_id?.trim()) out.push(data.product_id.trim());
+  for (const item of data.product_cart ?? []) {
+    if (item?.product_id?.trim()) out.push(item.product_id.trim());
+  }
+  return Array.from(new Set(out));
+}
 
 export async function POST(req: Request) {
   const raw = await req.text();
@@ -73,6 +100,34 @@ export async function POST(req: Request) {
 
   if (!email || !email.includes("@")) {
     return Response.json({ received: true, skipped: "no_email_in_payload" });
+  }
+
+  // PRODUCT ISOLATION GUARD: If the same Dodo account also sells other products
+  // (e.g. Browser Extensions or PassMark EU), NEVER add their buyers to Last Call Leads
+  // or send them Texas liquor-license emails!
+  const allowedProducts = getLastCallProductIds();
+  const eventProducts = extractEventProductIds(data);
+  const hasLclMeta = Boolean(data.metadata?.subscriber_id || data.metadata?.subscriber_email);
+  if (
+    allowedProducts.size > 0 &&
+    !hasLclMeta &&
+    (eventProducts.length === 0 || !eventProducts.some((p) => allowedProducts.has(p)))
+  ) {
+    const isOneTimePaid = type.includes("payment.succeeded");
+    if (isOneTimePaid) {
+      const amt =
+        typeof data.total_amount === "number"
+          ? `$${(data.total_amount / 100).toFixed(2)} ${data.currency ?? "USD"}`
+          : "";
+      await sendTelegramOwner(
+        `🛒 Sale on another Dodo product ${amt}\nCustomer: ${email}\nProduct: ${eventProducts.join(", ") || "unknown"}\n(Safely ignored by Last Call Leads — no wrong email sent!)`
+      ).catch(() => undefined);
+    }
+    return Response.json({
+      received: true,
+      ignored: "non_lastcallleads_product",
+      productIds: eventProducts,
+    });
   }
 
   const customerId = data.customer_id ?? data.customer?.customer_id ?? null;
