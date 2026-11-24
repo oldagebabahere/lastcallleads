@@ -68,7 +68,7 @@ function generateExtensionMasterKey(seed: string): string {
     }
     if (Math.abs(hash) % 7 === 0) return candidate;
   }
-  return "DODO-PROSUITE-1004";
+  return "DODO-PROSUITE-1006";
 }
 
 function extractEventProductIds(data: NonNullable<DodoEvent["data"]>): string[] {

@@ -13,7 +13,7 @@ import {
 import { sweepStale } from "@/lib/pourwatch";
 import { runDigest } from "@/lib/digest";
 import { runReceiptsIngest } from "@/lib/ingest-receipts";
-import { buildSocialPost, runTrialTips } from "@/lib/owner-tasks";
+import { buildSocialPost, runAnnualUpsells, runTrialTips } from "@/lib/owner-tasks";
 import { runAutoOutreach } from "@/lib/auto-outreach";
 import { harvestProspects, todaysState } from "@/lib/prospects";
 import { isAutoOutreachActive } from "@/lib/mailer";
@@ -62,7 +62,7 @@ export async function GET(req: Request) {
     error: String(e),
   }));
 
-  // 4) Trial retention tips + Mon/Wed/Fri social post (only while inside 50s safety envelope).
+  // 4) Trial retention tips + Day-21 annual prepay upsell + Mon/Wed/Fri social post.
   const trialTips =
     Date.now() - started < 50_000
       ? await runTrialTips().catch((e) => ({
@@ -71,6 +71,11 @@ export async function GET(req: Request) {
           error: String(e),
         }))
       : { sent: 0, skipped: 0, deferred: true };
+
+  const annualUpsells =
+    Date.now() - started < 50_000
+      ? await runAnnualUpsells().catch(() => ({ sent: 0, skipped: 0 }))
+      : { sent: 0, skipped: 0 };
 
   let socialPost: { sent: boolean; detail: string } | null = null;
   if ((dow === 1 || dow === 3 || dow === 5) && Date.now() - started < 50_000) {
@@ -150,6 +155,7 @@ export async function GET(req: Request) {
     },
     digest: { ok: digest.ok, sent: digest.sent ?? 0 },
     trialTips,
+    annualUpsells,
     ...(socialPost ? { socialPost } : {}),
     ...(autoOutreach ? { autoOutreach } : {}),
   });

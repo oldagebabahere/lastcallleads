@@ -628,7 +628,35 @@ export default async function Home() {
           </div>
         </Reveal>
 
-        <div className="stat-card relative mx-auto mt-8 max-w-5xl rounded-xl border-amber/50 p-6 text-center text-inkread">
+        {/* ANNUAL PREPAY UPFRONT CASH STRIP (2 Months Free) */}
+        <div className="stat-card relative mx-auto mt-8 max-w-5xl rounded-xl border-amber/60 bg-amber/[0.08] p-6 text-inkread">
+          <div className="flex flex-wrap items-center justify-between gap-5">
+            <div className="max-w-2xl text-left">
+              <p className="font-mono text-[10px] font-bold tracking-[0.2em] text-wine2">
+                ANNUAL PREPAY · PAY 10 MONTHS, GET 12 (2 MONTHS FREE)
+              </p>
+              <p className="mt-1.5 font-display text-2xl font-medium text-inkread">
+                Territory <span className="text-wine2">$1,290/yr</span>{" "}
+                <span className="font-mono text-xs text-inkread/60">(save $258)</span>
+                {" · "}
+                Pro 3-State <span className="text-wine2">$2,490/yr</span>{" "}
+                <span className="font-mono text-xs text-inkread/60">(save $498)</span>
+              </p>
+              <p className="mt-1.5 text-xs leading-relaxed text-inkread/75">
+                Lock your territory seat for a full 12 months with one corporate invoice or card
+                payment — immune to price increases and guaranteed seat renewal.
+              </p>
+            </div>
+            <Link
+              href="/contact?subject=Annual%20Prepay%20(2%20Months%20Free)"
+              className="shrink-0 rounded-full bg-wine2 px-6 py-3 font-mono text-[11px] font-bold tracking-[0.14em] text-[#f6eee1] transition-transform hover:scale-[1.03]"
+            >
+              CLAIM 2 MONTHS FREE →
+            </Link>
+          </div>
+        </div>
+
+        <div className="stat-card relative mx-auto mt-6 max-w-5xl rounded-xl border-amber/50 p-6 text-center text-inkread">
           <p className="font-mono text-[10px] font-semibold tracking-[0.2em] text-wine2">
             ALL-9 ENTERPRISE + API
           </p>

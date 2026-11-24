@@ -4,7 +4,7 @@
 //   3) buildSocialPost() — Mon/Wed/Fri social post auto-published via Zapier/Make/n8n webhooks
 import { db } from "@/db";
 import { contactMessages, emailLog, events, subscribers } from "@/db/schema";
-import { and, desc, eq, gt, isNull, notLike, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, isNull, lt, notLike, or, sql } from "drizzle-orm";
 import { BRAND } from "@/lib/brand";
 import { PUBLIC_CONFIG } from "@/lib/public-config";
 import { siteUrl } from "@/lib/site";
@@ -212,6 +212,113 @@ export async function runTrialTips(): Promise<{ sent: number; skipped: number }>
 }
 
 /* ------------------------------------------------------------------ */
+/* 1.5) ANNUAL PREPAY UPSELL — Day 21+ happy paying subscribers       */
+/*      (Pay 10 months, get 12 = $2,490 Pro / $1,290 Solo upfront!)   */
+/* ------------------------------------------------------------------ */
+const ANNUAL_SUBJECT = "2 free months on your territory — annual prepay seat lock";
+
+export async function runAnnualUpsells(): Promise<{ sent: number; skipped: number }> {
+  const cutoff21d = new Date(Date.now() - 21 * 86_400_000);
+  const activeSubs = await db
+    .select()
+    .from(subscribers)
+    .where(
+      and(
+        eq(subscribers.status, "active"),
+        eq(subscribers.emailOptOut, false),
+        lt(subscribers.createdAt, cutoff21d)
+      )
+    )
+    .limit(100);
+
+  if (!activeSubs.length) return { sent: 0, skipped: 0 };
+  const mailReady = isMailTransportConfigured();
+  let sent = 0;
+  let skipped = 0;
+
+  for (const s of activeSubs) {
+    if (mailReady && !PUBLIC_CONFIG.postalAddress && !isOwnerAddress(s.email)) {
+      skipped++;
+      continue;
+    }
+    const already = await db
+      .select({ id: emailLog.id })
+      .from(emailLog)
+      .where(and(eq(emailLog.toEmail, s.email), eq(emailLog.subject, ANNUAL_SUBJECT)))
+      .limit(1);
+    if (already.length) {
+      skipped++;
+      continue;
+    }
+
+    const isPro = s.plan === "pro";
+    const annualPrice = isPro ? "$2,490/yr" : "$1,290/yr";
+    const savings = isPro ? "$498" : "$258";
+    const planName = isPro ? "Pro Multi-State (3 States)" : "Territory (1 State)";
+    const prettySt = formatStateNames(s.states);
+    const contactHref = `${siteUrl()}/contact?subject=${encodeURIComponent(`Annual Prepay — ${planName} (${annualPrice})`)}`;
+    const unsubscribe = unsubscribeUrls(s.email);
+    const logoSrc = `${siteUrl()}/brand-logo.png`;
+
+    if (mailReady) {
+      try {
+        const res = await sendTransactionalMail({
+          from: alertFrom(),
+          to: s.email,
+          replyTo: PUBLIC_CONFIG.contactEmail,
+          subject: ANNUAL_SUBJECT,
+          headers: {
+            "List-Unsubscribe": `<${unsubscribe.oneClick}>`,
+            "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+          },
+          html: `<!doctype html><html><body style="margin:0;background:#0b0906;color:#f2ead9;font-family:Georgia,serif">
+            <div style="max-width:620px;margin:auto;padding:32px 20px">
+              <table role="presentation" style="width:100%;border-collapse:collapse;margin-bottom:18px">
+                <tr>
+                  <td style="width:44px;vertical-align:middle;padding-right:10px">
+                    <img src="${logoSrc}" alt="${esc(BRAND.name)}" width="38" height="38" style="display:block;width:38px;height:38px;border-radius:9px;border:1px solid #e9a13b66" />
+                  </td>
+                  <td style="vertical-align:middle">
+                    <div style="font-size:11px;letter-spacing:0.22em;color:#e9a13b;text-transform:uppercase;font-family:monospace;font-weight:700">${esc(BRAND.name)} · VIP ANNUAL OFFER</div>
+                    <div style="font-size:10px;color:#988689;font-family:monospace;margin-top:2px">Active Territory: ${esc(prettySt)}</div>
+                  </td>
+                </tr>
+              </table>
+              <h1 style="font-size:26px;margin:8px 0 10px">Pay 10 months, get 12 full months.</h1>
+              <p style="color:#d6c7ba;font-size:15px;line-height:1.75">Since your morning alerts for <strong style="color:#fff">${esc(prettySt)}</strong> have been running smoothly, we wanted to offer you our founding annual rate: lock in <strong style="color:#e9a13b">${planName} at ${annualPrice}</strong> (2 full months free — save ${savings}) with guaranteed 12-month territory seat protection.</p>
+              <p style="margin:24px 0">
+                <a href="${contactHref}" style="background:#e9a13b;color:#140b0e;padding:12px 22px;border-radius:8px;font-family:monospace;font-size:12px;font-weight:700;letter-spacing:0.08em;text-decoration:none;display:inline-block">SWITCH TO ANNUAL (${annualPrice} · SAVE ${savings}) →</a>
+              </p>
+              <p style="color:#c9bfae;font-size:13px;line-height:1.7">Or simply reply <strong>&ldquo;ANNUAL&rdquo;</strong> to this email and we&rsquo;ll send your one-click Dodo Payments annual link and credit your remaining month automatically.</p>
+              <p style="color:#8d8375;font-size:11px;line-height:1.7;font-family:monospace;margin-top:22px">
+                <a href="${unsubscribe.page}" style="color:#e9a13b">Stop alert emails</a>
+              </p>
+              ${footerHtml()}
+            </div>
+          </body></html>`,
+        });
+        if (res.status === "sent") {
+          sent++;
+          await db.insert(emailLog).values({
+            toEmail: s.email,
+            subject: ANNUAL_SUBJECT,
+            status: "sent",
+            detail: `annual upsell (${annualPrice})`,
+          });
+        } else {
+          skipped++;
+        }
+      } catch {
+        skipped++;
+      }
+    } else {
+      skipped++;
+    }
+  }
+  return { sent, skipped };
+}
+
+/* ------------------------------------------------------------------ */
 /* 2) WEEKLY DB BACKUP                                                */
 /* ------------------------------------------------------------------ */
 function toCsv(rows: Record<string, unknown>[]): string {
@@ -336,20 +443,24 @@ export async function buildSocialPost(): Promise<{
     : "";
 
   const link = siteUrl();
-  const statesLine = week.map((w) => `${stateFullName(w.state)}: ${w.n}`).join(" · ");
 
-  const linkedin = `NEW BARS AND RESTAURANTS FILE PAPERWORK MONTHS BEFORE THEY OPEN.
+  const linkedin = `Most wine, spirits & craft beer reps call new bars the week they open.
 
-This week our monitors caught ${total.toLocaleString()} new liquor-license filings across ${week.length} states (${statesLine}).
+By then, the well spirits are poured, the draft handles are signed, and the wine list is printed.
 
-Every one of those filings is a venue 60–90 days from pouring its first drink — still choosing its distributors, insurance, and POS.
+This week alone, ${total.toLocaleString()} brand-new bars, restaurants & package stores filed official liquor license paperwork across ${week.length} US states:
+${week.map((w) => `• ${stateFullName(w.state)}: ${w.n.toLocaleString()} new filings`).join("\n")}
+
+Every single filing is a verified commercial lease 60–90 days BEFORE opening night.
 
 ${venueLine}
 
-We email them to your inbox every morning, the day they post.
-${link}
+We sweep 18 official state portals every morning and drop the street address, legal LLC, estimated alcohol spend, and 1-click Google Maps route in your inbox at 7:00 AM.
 
-#hospitality #bars #restaurants #beverageindustry #salestips`;
+See a live sample dossier (or grab a 7-day free trial — no card):
+${link}/sample
+
+#wineandspirits #craftbeer #beveragedistribution #hospitalitysales #bars #restaurants`;
 
   const xRaw = `${total.toLocaleString()} new bar & restaurant liquor filings landed this week across ${week.length} states — every one is a buyer 60–90 days from opening.
 

@@ -119,18 +119,28 @@ function sameCompany(emailDomain: string, host: string): boolean {
   return d === host || d.endsWith(`.${host}`) || host.endsWith(`.${d}`);
 }
 
-export async function findRealEmail(site: string | null): Promise<string | null> {
+const BEVERAGE_CONTEXT_RE =
+  /\b(wine|wines|winery|vineyard|spirits?|liquor|beer|brew|brewery|brewing|distill|distillery|cidery|cider|beverage|wholesale|distribut|importer|hospitality|cellar|taproom|mead|cocktails?|alcohol|bar|restaurant|tasting)\b/i;
+
+export async function findRealEmail(
+  site: string | null,
+  opts: { requireBeverageContext?: boolean } = {}
+): Promise<string | null> {
   if (!site) return null;
   const o = originOf(site);
   if (!o) return null;
   if (!(await isSafePublicHost(o.rawHost))) return null;
 
   const found = new Map<string, number>();
+  let sawBeverageContext = !opts.requireBeverageContext;
   for (const path of PAGES) {
     const html = (await getText(o.origin + path))
       .replace(/&#64;|&commat;|%40/gi, "@")
       .replace(/\s*\[at\]\s*/gi, "@");
     if (!html) continue;
+    if (!sawBeverageContext && BEVERAGE_CONTEXT_RE.test(html)) {
+      sawBeverageContext = true;
+    }
     const re = /[a-z0-9._%+-]{1,64}@[a-z0-9.-]+\.[a-z]{2,}/gi;
     for (const m of html.matchAll(re)) {
       const email = m[0].toLowerCase().replace(/^mailto:/, "");
@@ -142,9 +152,9 @@ export async function findRealEmail(site: string | null): Promise<string | null>
       const score = GOOD_LOCAL.test(local) ? 2 : 1;
       found.set(email, Math.max(found.get(email) ?? 0, score));
     }
-    if (found.size) break;
+    if (found.size && sawBeverageContext) break;
   }
-  if (!found.size) return null;
+  if (!found.size || !sawBeverageContext) return null;
   return [...found.entries()].sort((a, b) => b[1] - a[1])[0][0];
 }
 

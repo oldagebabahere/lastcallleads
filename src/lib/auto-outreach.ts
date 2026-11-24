@@ -245,11 +245,17 @@ async function deliverOutreach(opts: {
     }
 
     let lastErr = "";
+    // Unified single-inbox Reply-To so replies to ALL 4 outreach Gmails land in ONE main inbox!
+    const unifiedReplyTo =
+      process.env.OUTREACH_REPLY_TO?.trim() ||
+      process.env.SUPPORT_INBOX_EMAIL?.trim() ||
+      process.env.OPS_EMAIL?.trim() ||
+      PUBLIC_CONFIG.contactEmail;
     for (const chosen of ordered) {
       const res = await sendViaSmtpAccount(chosen, {
         from,
         to: opts.to,
-        replyTo: chosen.user,
+        replyTo: unifiedReplyTo || chosen.user,
         subject: opts.subject,
         html: opts.html,
       });
@@ -500,8 +506,9 @@ export async function runAutoOutreach(
   const rotationSalt = `${new Date().toISOString().slice(0, 10)}-${new Date().getUTCHours()}`;
 
   // Prioritize highest-converting hospitality buyers FIRST (distributors -> craft breweries ->
-  // beverage suppliers -> commercial insurance -> attorneys), exclude companies already sent,
-  // and rotate deterministically so outreach NEVER stalls re-scanning the same 24 rows!
+  // beverage suppliers -> commercial insurance -> attorneys), exclude companies contacted in
+  // the last 120 days (enables perpetual quarterly re-engagement with fresh local bars!),
+  // and rotate deterministically so outreach NEVER stalls re-scanning the same rows!
   const loadCandidates = async () => {
     const raw = await db
       .select()
@@ -516,6 +523,7 @@ export async function runAutoOutreach(
             SELECT 1 FROM outreach_sent os
             WHERE lower(os.company) = lower(${prospects.name})
               AND os.status = 'sent'
+              AND os.sent_at > now() - interval '120 days'
           )`
         )
       )
@@ -538,22 +546,25 @@ export async function runAutoOutreach(
 
   let candidates = await loadCandidates();
 
-  // Always auto-harvest high-intent breweries & beverage distributors if a state lacks them
-  // (even when legacy insurance/attorney rows exist) so outreach targets real alcohol buyers!
+  // Always auto-harvest official Wine & Spirits Distributors & Craft Breweries if a state
+  // lacks them so the pipeline refills itself forever at $0 cost!
+  const distCount = candidates.filter((c) => c.category === "distributor").length;
   const highIntentCount = candidates.filter((c) =>
     ["distributor", "brewery", "beverage"].includes(c.category)
   ).length;
 
-  if (highIntentCount < 6 || candidates.length < 8) {
-    const priorityOrder = ["brewery", "distributor", "beverage"];
-    const pickedCat = priorityOrder[new Date().getUTCHours() % priorityOrder.length];
+  if (distCount < 4) {
     await Promise.race([
-      harvestProspects(state, [pickedCat]).catch(() => undefined),
-      new Promise((r) => setTimeout(r, 18_000)),
+      harvestDistributors(state, 40).catch(() => undefined),
+      new Promise((r) => setTimeout(r, 12_000)),
     ]);
-    if (process.env.BRAVE_API_KEY?.trim()) {
-      await harvestDistributors(state, 2).catch(() => undefined);
-    }
+    candidates = await loadCandidates();
+  }
+  if (highIntentCount < 6 || candidates.length < 8) {
+    await Promise.race([
+      harvestProspects(state, ["brewery"]).catch(() => undefined),
+      new Promise((r) => setTimeout(r, 12_000)),
+    ]);
     candidates = await loadCandidates();
   }
 
@@ -572,7 +583,11 @@ export async function runAutoOutreach(
     };
   }
 
-  const foundEmails = await mapLimit(candidates, 5, (c) => findRealEmail(c.website));
+  const foundEmails = await mapLimit(candidates, 5, (c) =>
+    findRealEmail(c.website, {
+      requireBeverageContext: c.osmKey.startsWith("govdist/"),
+    })
+  );
 
   const resolvedPairs: { company: string; city: string | null; category: string; email: string }[] =
     [];
@@ -605,11 +620,18 @@ export async function runAutoOutreach(
   }
 
   const emails = resolvedPairs.map((r) => r.email);
+  const cooldownCutoff = new Date(Date.now() - 120 * 86_400_000);
   const [alreadySent, existingSubs] = await Promise.all([
     db
       .select({ email: outreachSent.email })
       .from(outreachSent)
-      .where(and(inArray(outreachSent.email, emails), eq(outreachSent.status, "sent"))),
+      .where(
+        and(
+          inArray(outreachSent.email, emails),
+          eq(outreachSent.status, "sent"),
+          gt(outreachSent.sentAt, cooldownCutoff)
+        )
+      ),
     db
       .select({ email: subscribers.email })
       .from(subscribers)
@@ -695,7 +717,21 @@ export async function runAutoOutreach(
           barsJson: JSON.stringify(sampleBarNames),
           followupCount: 0,
         })
-        .onConflictDoNothing();
+        .onConflictDoUpdate({
+          target: outreachSent.email,
+          set: {
+            company: target.company,
+            state,
+            category: target.category,
+            status: "sent",
+            senderAccount: res.senderId,
+            lastSubject: subject,
+            barsJson: JSON.stringify(sampleBarNames),
+            followupCount: 0,
+            followupSentAt: null,
+            sentAt: new Date(),
+          },
+        });
     } else if (res.status === "dry_run") {
       dryRun++;
     }

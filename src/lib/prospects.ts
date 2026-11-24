@@ -11,6 +11,7 @@ import { prospects } from "@/db/schema";
 import { and, eq, notInArray } from "drizzle-orm";
 
 import { LIVE_STATE_CODES, stateFullName } from "@/lib/states";
+import { harvestDistributors } from "@/lib/distributors";
 
 export const PROSPECT_CATEGORIES = [
   { id: "distributor", label: "Beverage & food distributors", tag: '["wholesale"~"beverages|alcohol|wine|beer|food"]' },
@@ -346,8 +347,14 @@ export async function harvestProspects(
     const pair = cats.slice(i, i + 2);
     const settled = await Promise.all(
       pair.map(async (cat): Promise<ProspectRun> => {
-        // Fast path: Open Brewery DB gives 200-600 verified US craft breweries
-        // with real websites & phones per state in <2 seconds!
+        // Fast path 1: Official state Wine/Spirits Distributors + DNS MX verification (<4s!)
+        if (cat.id === "distributor") {
+          const dist = await harvestDistributors(state, 60);
+          if (dist.ok && (dist.looked > 0 || dist.added > 0)) {
+            return { category: "distributor", ok: true, seen: dist.looked, added: dist.added };
+          }
+        }
+        // Fast path 2: Open Brewery DB GitHub CDN (200-900 verified craft breweries/state in 150ms!)
         if (cat.id === "brewery") {
           const obdb = await harvestOpenBreweryDb(state);
           if (obdb.ok && (obdb.seen ?? 0) > 0) return obdb;
