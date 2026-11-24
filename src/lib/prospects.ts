@@ -10,10 +10,13 @@ import { ensureSchema } from "@/db/bootstrap";
 import { prospects } from "@/db/schema";
 import { and, eq, notInArray } from "drizzle-orm";
 
+import { LIVE_STATE_CODES } from "@/lib/states";
+
 export const PROSPECT_CATEGORIES = [
-  { id: "attorney", label: "Attorneys", tag: '["office"="lawyer"]' },
-  { id: "insurance", label: "Insurance agents", tag: '["office"="insurance"]' },
-  { id: "beverage", label: "Beverage sellers", tag: '["shop"="alcohol"]' },
+  { id: "brewery", label: "Craft breweries & wineries", tag: '["craft"~"brewery|winery|distillery"]' },
+  { id: "beverage", label: "Beverage & wine suppliers", tag: '["shop"~"alcohol|wine|beverages"]' },
+  { id: "insurance", label: "Commercial insurance agents", tag: '["office"="insurance"]' },
+  { id: "attorney", label: "Hospitality attorneys", tag: '["office"="lawyer"]' },
   { id: "bar", label: "Bars (end leads)", tag: '["amenity"="bar"]' },
 ] as const;
 
@@ -49,12 +52,8 @@ const STATE_BBOX: Record<string, [number, number, number, number]> = {
   WY: [40.9, -111.1, 45.1, -104.0],
 };
 
-// Daily rotation: the biggest bar-market states first.
-const ROTATION = [
-  "TX", "FL", "CA", "NY", "GA", "PA", "IL", "OH", "NC", "MI",
-  "AZ", "TN", "VA", "NJ", "MA", "WA", "CO", "MO", "LA", "IN",
-  "SC", "MD", "OR", "CT", "MN", "WI", "NV", "AL", "OK", "KY",
-];
+// Daily rotation across our 9 verified live markets ONLY (keeps Supabase 500MB free tier lean!).
+const ROTATION = LIVE_STATE_CODES;
 
 const MIRRORS = [
   "https://overpass-api.de/api/interpreter",
@@ -84,7 +83,7 @@ async function overpass(query: string): Promise<OsmElement[]> {
             "User-Agent": "pourwatch/1.0 (prospect-monitor)",
           },
           body: "data=" + encodeURIComponent(query),
-          signal: AbortSignal.timeout(90_000),
+          signal: AbortSignal.timeout(22_000),
           cache: "no-store",
         });
         if (!res.ok) continue;
@@ -134,10 +133,10 @@ export async function harvestProspects(
           // all sit inside the NY box). area["ISO3166-2"="US-XX"] is the
           // real state polygon, so only businesses INSIDE the state come
           // back. Canadian businesses must never enter the pool (CASL).
-          const q = `[out:json][timeout:80];area["ISO3166-2"="US-${state}"]->.st;(node${cat.tag}(${s},${w},${n},${e})(area.st);way${cat.tag}(${s},${w},${n},${e})(area.st););out center 5000;`;
+          const q = `[out:json][timeout:35];area["ISO3166-2"="US-${state}"]->.st;(node${cat.tag}(${s},${w},${n},${e})(area.st);way${cat.tag}(${s},${w},${n},${e})(area.st););out center 1500;`;
           const els = await overpass(q);
           const rows = els
-            .filter((el) => el.tags?.name)
+            .filter((el) => el.tags?.name && (el.tags?.website || el.tags?.["contact:website"] || el.tags?.phone || el.tags?.["contact:phone"]))
             .map((el) => ({
               category: cat.id,
               osmKey: `${el.type}/${el.id}`,

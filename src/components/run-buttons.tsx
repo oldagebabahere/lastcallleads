@@ -1,27 +1,42 @@
 "use client";
 
 import { useState } from "react";
-import { LoaderCircle, Play, RefreshCcw } from "lucide-react";
+import { LoaderCircle, Play, RefreshCcw, ShieldCheck } from "lucide-react";
 
-// The manual override panel: pull data now / send digests now.
-// Automation runs daily on its own — these are just for showing off or testing.
+// Manual control room actions — all 18 live retail sources across 9 markets
+// run cleanly inside Vercel Hobby (no GitHub Actions needed).
 export default function RunButtons({ adminKey }: { adminKey: string }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [log, setLog] = useState<string>("");
 
-  async function run(action: string, label: string, source?: string) {
+  async function run(
+    label: string,
+    payload: {
+      action: string;
+      state?: string;
+      tier?: "fast" | "heavy" | "all";
+      force?: boolean;
+      dryRun?: boolean;
+    }
+  ) {
     if (busy) return;
     setBusy(label);
     setLog(`Running: ${label}…`);
     try {
       const res = await fetch("/api/admin/run", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ key: adminKey, action, source }),
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-key": adminKey,
+        },
+        body: JSON.stringify(payload),
       });
       const data = await res.json();
       setLog(JSON.stringify(data, null, 2));
-      window.setTimeout(() => window.location.reload(), mutateMs(action));
+      window.setTimeout(
+        () => window.location.reload(),
+        payload.action === "ingest" ? 2800 : 2000
+      );
     } catch (err) {
       setLog(`Request failed: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
@@ -31,20 +46,74 @@ export default function RunButtons({ adminKey }: { adminKey: string }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap gap-3">
-        <Btn label="Pull ALL sources now" busy={busy} onClick={() => run("ingest", "Pull all")} />
-        <Btn label="Texas only" busy={busy} onClick={() => run("ingest", "Texas", "tx-pending")} secondary />
-        <Btn label="New York only" busy={busy} onClick={() => run("ingest", "New York", "ny-pending")} secondary />
-        <Btn label="Send digests now" busy={busy} onClick={() => run("digest", "Digests")} secondary />
-        <Btn label="Send weekly briefings" busy={busy} onClick={() => run("briefings", "Briefings")} secondary />
-        <Btn label="Send monthly recaps" busy={busy} onClick={() => run("monthly_recaps", "Monthly Recaps")} secondary />
+      <div className="flex flex-wrap gap-2.5">
+        <Btn
+          label="Pull All 9 Markets"
+          busy={busy}
+          onClick={() => run("Pull All 9 Markets", { action: "ingest", tier: "all" })}
+        />
+        <Btn
+          label="Texas only"
+          busy={busy}
+          onClick={() => run("Texas only", { action: "ingest", state: "TX" })}
+          secondary
+        />
+        <Btn
+          label="New York only"
+          busy={busy}
+          onClick={() => run("New York only", { action: "ingest", state: "NY" })}
+          secondary
+        />
+        <Btn
+          label="California only"
+          busy={busy}
+          onClick={() => run("California only", { action: "ingest", state: "CA" })}
+          secondary
+        />
+        <Btn
+          label="PourWatch Self-Heal"
+          busy={busy}
+          onClick={() => run("PourWatch Self-Heal", { action: "pourwatch" })}
+          secondary
+          heal
+        />
+        <Btn
+          label="TX Receipts"
+          busy={busy}
+          onClick={() => run("TX Receipts", { action: "receipts" })}
+          secondary
+        />
+        <Btn
+          label="Send Digests"
+          busy={busy}
+          onClick={() => run("Send Digests", { action: "digest" })}
+          secondary
+        />
+        <Btn
+          label="Weekly Briefings"
+          busy={busy}
+          onClick={() => run("Weekly Briefings", { action: "briefings" })}
+          secondary
+        />
+        <Btn
+          label="Monthly Recaps"
+          busy={busy}
+          onClick={() => run("Monthly Recaps", { action: "monthly_recaps" })}
+          secondary
+        />
+        <Btn
+          label="Outreach Dry-Run"
+          busy={busy}
+          onClick={() => run("Outreach Dry-Run", { action: "outreach", dryRun: true })}
+          secondary
+        />
       </div>
       <p className="font-mono text-xs leading-relaxed tracking-[0.1em] text-smoke">
-        NOTE: these run every morning automatically (12:00 + 12:20 UTC). Manual runs are
-        safe — the machine never records the same filing twice.
+        NOTE: Vercel Cron runs daily automation automatically at 11:00 UTC (zero GitHub Actions
+        needed). Manual runs are idempotent — duplicate filings are never created.
       </p>
       {log && (
-        <pre className="max-h-72 overflow-auto rounded-lg border border-line bg-ink p-4 font-mono text-sm leading-relaxed text-cream/70">
+        <pre className="max-h-72 overflow-auto rounded-lg border border-line bg-ink p-4 font-mono text-xs leading-relaxed text-cream/80">
           {log}
         </pre>
       )}
@@ -52,34 +121,35 @@ export default function RunButtons({ adminKey }: { adminKey: string }) {
   );
 }
 
-function mutateMs(action: string): number {
-  return action === "ingest" ? 2500 : 2000;
-}
-
 function Btn({
   label,
   busy,
   onClick,
   secondary,
+  heal,
 }: {
   label: string;
   busy: string | null;
   onClick: () => void;
   secondary?: boolean;
+  heal?: boolean;
 }) {
   const isBusy = busy === label;
   return (
     <button
+      type="button"
       onClick={onClick}
       disabled={busy !== null}
-      className={`flex items-center gap-2 rounded-md px-4 py-2.5 font-mono text-sm font-semibold tracking-[0.12em] transition-all disabled:opacity-50 ${
+      className={`flex items-center gap-2 rounded-md px-4 py-2.5 font-mono text-xs font-semibold tracking-[0.12em] transition-all disabled:opacity-50 ${
         secondary
-          ? "border border-line text-cream/70 hover:border-smoke hover:text-cream"
-          : "bg-amber text-ink hover:scale-[1.03]"
+          ? "border border-line text-cream/80 hover:border-amber/60 hover:text-amber"
+          : "bg-amber text-[#140b0e] hover:scale-[1.03]"
       }`}
     >
       {isBusy ? (
         <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+      ) : heal ? (
+        <ShieldCheck className="h-3.5 w-3.5" />
       ) : secondary ? (
         <RefreshCcw className="h-3.5 w-3.5" />
       ) : (

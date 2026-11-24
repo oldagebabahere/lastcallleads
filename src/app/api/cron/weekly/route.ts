@@ -1,101 +1,117 @@
-// WEEKLY SWEEP (Hobby-plan friendly). Mondays: housekeeping + briefings.
-// 1st of month: value recaps. Every run: ONE small-state prospect harvest
-// (big states need Pro's longer timeouts — they still run from the
-// dashboard button at any plan).
+// WEEKLY SWEEP (Mondays at 14:00 UTC).
+//   1) PourWatch reprobe + catalog auto-heal for paused sources
+//   2) DB housekeeping (pruning & bad-date cleanup)
+//   3) Weekly territory briefings (sent ONCE — maintenance no longer calls this)
+//   4) First-Monday monthly value recaps (12/12 months guaranteed, deduped!)
+//   5) Owner weekly recap + CSV backup
 import { ensureSchema } from "@/db/bootstrap";
 import { cronAuthorized } from "@/lib/auth";
+import { reprobeAndHealPaused } from "@/lib/ingest-aggregator";
 import { runMaintenance } from "@/lib/maintenance";
 import { runBriefings, runMonthlyRecaps } from "@/lib/digest";
-import { harvestProspects } from "@/lib/prospects";
 import { runDbBackup } from "@/lib/owner-tasks";
 import { sendOpsAlert } from "@/lib/pourwatch";
 import { db } from "@/db";
-import { prospects, venueReceipts } from "@/db/schema";
-import { events } from "@/db/schema";
-import { and, eq, gt, sql } from "drizzle-orm";
+import { emailLog, events, prospects, venueReceipts } from "@/db/schema";
+import { and, gt, sql } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
-
-// Small states finish inside Hobby's short function timeout.
-const SMALL_STATES = ["DE", "RI", "VT", "NH", "WY", "ND", "SD", "MT", "ME", "AK"];
 
 export async function GET(req: Request) {
   if (!cronAuthorized(req)) {
     return Response.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
+  const started = Date.now();
   await ensureSchema();
 
+  // 1) Self-healing: re-probe & auto-heal paused sources weekly!
+  const reprobed = await reprobeAndHealPaused(false).catch(() => []);
+
+  // 2) Database maintenance & staleness check.
   const maintenance = await runMaintenance().catch((e) => ({
     ok: false,
     error: String(e),
   }));
-  const briefings = await runBriefings().catch((e) => ({ ok: false, error: String(e) }));
 
-  // Monthly recaps only on the 1st (and the 2nd as a safety retry).
-  const day = new Date().getUTCDate();
+  // 3) Weekly briefings — sent ONCE per Monday.
+  const briefings = await runBriefings().catch((e) => ({
+    ok: false,
+    sent: 0,
+    error: String(e),
+  }));
+
+  // 4) Monthly recaps — runs on the FIRST Monday of every month (day 1..7),
+  //    deduped against email_log so re-runs never double-send.
+  const now = new Date();
   let recaps: unknown = null;
-  if (day === 1 || day === 2) {
-    recaps = await runMonthlyRecaps().catch((e) => ({ ok: false, error: String(e) }));
+  if (now.getUTCDate() <= 7) {
+    const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    const already = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(emailLog)
+      .where(
+        and(
+          gt(emailLog.createdAt, monthStart),
+          sql`${emailLog.subject} LIKE 'Monthly value recap%'`
+        )
+      );
+    if ((already[0]?.n ?? 0) === 0) {
+      recaps = await runMonthlyRecaps().catch((e) => ({
+        ok: false,
+        error: String(e),
+      }));
+    } else {
+      recaps = { skipped: "already_sent_this_month" };
+    }
   }
 
-  // One small state per week, round-robin by week number.
-  const week = Math.floor(Date.now() / (7 * 86_400_000));
-  const state = SMALL_STATES[week % SMALL_STATES.length];
-  let harvestReport: { state: string; added?: number; error?: string } = {
-    state,
-  };
-  try {
-    const run = await harvestProspects(state);
-    const added = (run.results ?? []).reduce(
-      (n, r) => n + ((r as { added?: number }).added ?? 0),
-      0
-    );
-    harvestReport = { state, added };
-  } catch (e) {
-    harvestReport = { state, error: String(e).slice(0, 120) };
-  }
-
-  // Owner recap — one email a week: what the machine did, what to expect.
+  // 5) Owner recap email.
   let opsRecap = "skipped";
   try {
     const weekAgo = new Date(Date.now() - 7 * 86_400_000);
-    const filings = await db
-      .select({ n: sql<number>`count(*)::int` })
-      .from(events)
-      .where(gt(events.detectedAt, weekAgo));
-    const pool = await db
-      .select({ state: prospects.state, n: sql<number>`count(*)::int` })
-      .from(prospects)
-      .groupBy(prospects.state);
-    const poolStates = pool.filter((r) => r.n >= 20).map((r) => r.state).sort();
+    const [filings, pool, topVenue] = await Promise.all([
+      db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(events)
+        .where(gt(events.detectedAt, weekAgo)),
+      db
+        .select({ state: prospects.state, n: sql<number>`count(*)::int` })
+        .from(prospects)
+        .groupBy(prospects.state),
+      db
+        .select({
+          name: venueReceipts.tradeName,
+          city: venueReceipts.city,
+          total: venueReceipts.total,
+        })
+        .from(venueReceipts)
+        .orderBy(sql`period_end desc, total desc`)
+        .limit(1),
+    ]);
+    const poolStates = pool
+      .filter((r) => r.n >= 20)
+      .map((r) => r.state)
+      .sort();
     const weekIndex = Math.floor(Date.now() / (7 * 86_400_000));
     const rotation = poolStates.length
       ? poolStates[weekIndex % poolStates.length]
       : "TX";
-    const topVenue = await db
-      .select({
-        name: venueReceipts.tradeName,
-        city: venueReceipts.city,
-        total: venueReceipts.total,
-      })
-      .from(venueReceipts)
-      .orderBy(sql`period_end desc, total desc`)
-      .limit(1);
-    opsRecap = await sendOpsAlert(
+
+    opsRecap = (await sendOpsAlert(
       "Weekly recap — your machine ran itself",
-      `<p><strong>This week:</strong> ${Number(filings[0]?.n ?? 0).toLocaleString()} new filings ingested across all sources.</p>
-       <p><strong>Outreach rotation:</strong> this week's state is <strong>${rotation}</strong>${poolStates.length ? ` (pool: ${poolStates.join(", ")})` : " — prospect pool still growing, the daily job adds states automatically"}.</p>
-       ${topVenue[0]?.name ? `<p><strong>Biggest fish on the board:</strong> ${topVenue[0].name} (${topVenue[0].city ?? "TX"}) — $${Math.round(topVenue[0].total ?? 0).toLocaleString()} in monthly alcohol receipts.</p>` : ""}
-       <p style="color:#666;font-size:12px">Gmail automation sends daily. Just answer replies.</p>`
-    )
+      `<p><strong>This week:</strong> ${Number(filings[0]?.n ?? 0).toLocaleString()} new filings ingested.</p>
+       <p><strong>PourWatch self-healing:</strong> ${reprobed.length} paused source(s) re-probed.</p>
+       <p><strong>Outreach rotation:</strong> this week&apos;s state is <strong>${rotation}</strong>${poolStates.length ? ` (pool: ${poolStates.join(", ")})` : " — prospect pool growing automatically"}.</p>
+       ${topVenue[0]?.name ? `<p><strong>Top TX venue by revenue:</strong> ${topVenue[0].name} (${topVenue[0].city ?? "TX"}) — $${Math.round(topVenue[0].total ?? 0).toLocaleString()}/mo.</p>` : ""}`
+    ))
       ? "sent"
       : "logged";
   } catch {
     opsRecap = "error";
   }
 
-  // Weekly DB backup — customer list + messages as CSV attachments to owner
+  // 6) Weekly CSV backup of subscribers + contact messages.
   const backup = await runDbBackup().catch((e) => ({
     sent: false,
     detail: String(e).slice(0, 120),
@@ -103,11 +119,12 @@ export async function GET(req: Request) {
 
   return Response.json({
     ok: true,
+    elapsedMs: Date.now() - started,
     ranAt: new Date().toISOString(),
+    reprobed,
     maintenance: { ok: maintenance.ok },
-    briefings: { ok: briefings.ok },
+    briefings: { ok: briefings.ok, sent: "sent" in briefings ? briefings.sent : 0 },
     ...(recaps ? { recaps } : {}),
-    prospects: harvestReport,
     opsRecap,
     backup,
   });

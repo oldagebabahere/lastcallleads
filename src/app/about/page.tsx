@@ -9,6 +9,7 @@ export const metadata: Metadata = {
   title: "About — public-record intelligence for hospitality sales",
   description:
     "Last Call Leads turns official liquor-license filings into timely, practical sales intelligence for distributors and hospitality vendors.",
+  alternates: { canonical: "/about" },
 };
 
 export default function AboutPage() {

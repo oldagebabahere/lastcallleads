@@ -2,37 +2,34 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowRight, Database, FileText, Radio } from "lucide-react";
 import type { Metadata } from "next";
-import { desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, notLike, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { ensureSchema } from "@/db/bootstrap";
 import { events, licenses } from "@/db/schema";
 import { Footer, LeadRow, Nav } from "@/components/ui";
 import { embargoCutoff, maskName } from "@/lib/queries";
-import { BRAND } from "@/lib/brand";
+import { isJunkEntity } from "@/lib/lead-score";
 
 export const dynamic = "force-dynamic";
 
-const STATE_META: Record<
-  string,
-  { code: string; name: string; teaser: string }
-> = {
+const STATE_META: Record<string, { code: string; name: string; teaser: string }> = {
   texas: {
     code: "TX",
     name: "Texas",
     teaser:
-      "Texas publishes every pending application and license change in official state records, refreshed daily. We sweep them every morning and decode the filings into plain English.",
+      "Texas publishes pending applications, change-of-location filings, and the full active TABC registry in official state records, refreshed daily. We sweep them every morning and decode the permit codes into plain English.",
   },
   "new-york": {
     code: "NY",
     name: "New York",
     teaser:
-      "New York publishes pending applications and the full active registry in official state records. Our engine classifies every change — new filings, issuances and status flips — within a day.",
+      "New York publishes pending applications and the full active SLA registry in official state records. Our engine classifies every change — new filings, issuances and status flips — within a day.",
   },
   missouri: {
     code: "MO",
     name: "Missouri",
     teaser:
-      "Missouri publishes the full liquor-license register in official state records. We track every newly issued license — bars, restaurants and package stores — and deliver new venues by morning.",
+      "Missouri publishes both its active liquor-license register and closed-venue filings in official state records. We track every newly issued bar, restaurant and package store by morning.",
   },
   colorado: {
     code: "CO",
@@ -44,37 +41,31 @@ const STATE_META: Record<
     code: "CT",
     name: "Connecticut",
     teaser:
-      "Connecticut publishes restaurant, café and tavern liquor licenses in official state records. We track new credentials and deliver them to subscribers each morning.",
+      "Connecticut publishes its unified liquor-permit register across restaurants, cafés, bars, and package stores. We track newly active and pending credentials and deliver them each morning.",
   },
   washington: {
     code: "WA",
     name: "Washington",
     teaser:
-      "Washington's Liquor and Cannabis Board publishes its licensed register in official state records — including business phone numbers. New venues land in your inbox the next morning.",
+      "Washington's Liquor and Cannabis Board publishes both its licensed register (with phone numbers) and weekday local-authority application letters. New venues land in your inbox the next morning.",
   },
   illinois: {
     code: "IL",
-    name: "Illinois",
+    name: "Illinois (Chicago)",
     teaser:
-      "Chicago publishes its full liquor-license register — taverns, restaurants and package stores — with neighbourhood and ward detail. New and renewed licences arrive in your inbox daily.",
-  },
-  maryland: {
-    code: "MD",
-    name: "Maryland",
-    teaser:
-      "Montgomery County publishes its alcohol-beverage licensee register in official records. Every licensed venue, by type and address, tracked for subscribers.",
+      "Chicago publishes every newly issued liquor license — bars, taverns, restaurants and package stores — with neighborhood detail. We filter out renewals so you only see genuine brand-new openings.",
   },
   california: {
     code: "CA",
     name: "California",
     teaser:
-      "California is the country's largest bar and restaurant market. We track alcohol-licence records — including full-bar, restaurant and package-store permits — and decode the ABC type codes into plain English.",
+      "California is the country's largest bar and restaurant market. We track daily California ABC exports — including Type 47, 48, 41, 20 and 21 permits — and decode them into plain English.",
   },
   oregon: {
     code: "OR",
     name: "Oregon",
     teaser:
-      "Oregon's OLCC publishes both its licensed register and, uniquely, licence applications as they are received — including 'In Review' and 'Payment Pending' statuses. That is the earliest public signal a venue is being built.",
+      "Oregon's OLCC publishes licensed venues, live applications in review, and non-renewal lists. Pending applications give you the earliest public signal a new venue is being built.",
   },
 };
 
@@ -89,6 +80,7 @@ export async function generateMetadata({
   return {
     title: `New liquor license applications in ${s.name} — filings monitored daily`,
     description: `${s.name} liquor-license filings, tracked daily from official records. New bars, restaurants and liquor stores before they open — names, cities, license types.`,
+    alternates: { canonical: `/states/${slug}` },
   };
 }
 
@@ -101,45 +93,64 @@ export default async function StatePage({
   const s = STATE_META[slug];
   if (!s) notFound();
 
-  await ensureSchema();
+  let pending = 0;
+  let active = 0;
+  let eventCount30 = 0;
+  let recent: (typeof events.$inferSelect)[] = [];
+  let topTypes: { typeName: string | null; n: number }[] = [];
 
-  const [kindCounts, eventCount30, recent, topTypes] = await Promise.all([
-    db
-      .select({ kind: licenses.kind, n: sql<number>`count(*)::int` })
-      .from(licenses)
-      .where(eq(licenses.state, s.code))
-      .groupBy(licenses.kind),
-    db
-      .select({ n: sql<number>`count(*)::int` })
-      .from(events)
-      .where(
-        sql`${events.state} = ${s.code} AND ${events.occurredAt} > now() - interval '30 days'`
-      ),
-    db
-      .select()
-      .from(events)
-      .where(eq(events.state, s.code))
-      .orderBy(desc(events.occurredAt))
-      .limit(25),
-    db
-      .select({ typeName: licenses.typeName, n: sql<number>`count(*)::int` })
-      .from(licenses)
-      .where(
-        sql`${licenses.state} = ${s.code} AND ${licenses.kind} = 'pending' AND ${licenses.typeName} IS NOT NULL`
-      )
-      .groupBy(licenses.typeName)
-      .orderBy(desc(sql`count(*)`))
-      .limit(8),
-  ]);
+  try {
+    await ensureSchema();
+    const [kindCounts, count30, rawRecent, types] = await Promise.all([
+      db
+        .select({ kind: licenses.kind, n: sql<number>`count(*)::int` })
+        .from(licenses)
+        .where(eq(licenses.state, s.code))
+        .groupBy(licenses.kind),
+      db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(events)
+        .where(
+          sql`${events.state} = ${s.code} AND ${events.occurredAt} > now() - interval '30 days'`
+        ),
+      db
+        .select()
+        .from(events)
+        .where(
+          s.code === "FL"
+            ? eq(events.state, s.code)
+            : and(eq(events.state, s.code), notLike(events.licenseKey, "TTB-%"))
+        )
+        .orderBy(desc(events.occurredAt))
+        .limit(40),
+      db
+        .select({ typeName: licenses.typeName, n: sql<number>`count(*)::int` })
+        .from(licenses)
+        .where(
+          sql`${licenses.state} = ${s.code} AND ${licenses.kind} = 'pending' AND ${licenses.typeName} IS NOT NULL`
+        )
+        .groupBy(licenses.typeName)
+        .orderBy(desc(sql`count(*)`))
+        .limit(8),
+    ]);
 
-  const pending = kindCounts.find((k) => k.kind === "pending")?.n ?? 0;
-  const active = kindCounts.find((k) => k.kind === "active")?.n ?? 0;
+    pending = kindCounts.find((k) => k.kind === "pending")?.n ?? 0;
+    active = kindCounts.find((k) => k.kind === "active")?.n ?? 0;
+    eventCount30 = count30[0]?.n ?? 0;
+    recent = rawRecent
+      .filter((e) => !isJunkEntity(e.tradeName, e.ownerName, e.typeName))
+      .slice(0, 25);
+    topTypes = types;
+  } catch {
+    // render gracefully when DB is initializing
+  }
+
   const cut = embargoCutoff();
 
   const faq = [
     {
       q: `Where do new ${s.name} liquor license applications get published?`,
-      a: "They come from the official state registry, updated regularly. Our system watches them around the clock and translates changes into alerts.",
+      a: "They come from the official state licensing registry and federal TTB filings, refreshed regularly. Our system watches them every morning and translates changes into alerts.",
     },
     {
       q: `How fast will I hear about a new ${s.name} filing?`,
@@ -147,7 +158,7 @@ export default async function StatePage({
     },
     {
       q: `Is this ${s.name} data official?`,
-      a: "Yes — every record derives from official state filings. No scraped guesses, no estimates.",
+      a: "Yes — every record derives from official public filings. No scraped guesses, no estimates.",
     },
   ];
 
@@ -169,11 +180,10 @@ export default async function StatePage({
         }}
       />
 
-      <div className="mx-auto max-w-6xl px-5 pt-28 pb-20">
+      <div className="mx-auto max-w-6xl px-5 pb-20 pt-28">
         <p className="eyebrow">[ Coverage · {s.code} ]</p>
         <h1 className="font-display mt-5 max-w-3xl text-4xl font-medium leading-tight sm:text-6xl">
-          New liquor-license applications in{" "}
-          <span className="italic text-amber">{s.name}.</span>
+          New liquor-license applications in <span className="italic text-amber">{s.name}.</span>
         </h1>
         <p className="mt-5 max-w-2xl text-base leading-relaxed text-smoke">{s.teaser}</p>
 
@@ -182,7 +192,7 @@ export default async function StatePage({
           {[
             { icon: Radio, n: pending.toLocaleString(), l: "APPLICATIONS IN REVIEW RIGHT NOW" },
             { icon: Database, n: active.toLocaleString(), l: "ACTIVE LICENSES BEING WATCHED" },
-            { icon: FileText, n: (eventCount30[0]?.n ?? 0).toLocaleString(), l: "FILINGS CAPTURED · LAST 30 DAYS" },
+            { icon: FileText, n: eventCount30.toLocaleString(), l: "FILINGS CAPTURED · LAST 30 DAYS" },
           ].map((x) => (
             <div key={x.l} className="bg-panel p-6">
               <x.icon className="h-4 w-4 text-amber" />
@@ -199,7 +209,10 @@ export default async function StatePage({
               <h2 className="font-mono text-[11px] tracking-[0.28em] text-faint">
                 LATEST {s.name.toUpperCase()} FILINGS
               </h2>
-              <Link href={`/feed?state=${s.code}`} className="font-mono text-[11px] tracking-[0.15em] text-amber hover:underline">
+              <Link
+                href={`/feed?state=${s.code}`}
+                className="font-mono text-[11px] tracking-[0.15em] text-amber hover:underline"
+              >
                 FULL FEED →
               </Link>
             </div>
@@ -207,13 +220,17 @@ export default async function StatePage({
               {recent.map((e) => {
                 const locked = e.occurredAt ? e.occurredAt.getTime() > cut.getTime() : false;
                 const row = locked
-                  ? { ...e, tradeName: maskName(e.tradeName ?? e.ownerName ?? "Applicant"), ownerName: null }
+                  ? {
+                      ...e,
+                      tradeName: maskName(e.tradeName ?? e.ownerName ?? "Applicant"),
+                      ownerName: null,
+                    }
                   : e;
                 return <LeadRow key={e.id} e={row} locked={locked} />;
               })}
               {recent.length === 0 && (
                 <p className="px-6 py-10 font-mono text-xs text-smoke">
-                  Sweep pending — check back after the next pull.
+                  Sweep pending — check back after the next daily pull.
                 </p>
               )}
             </div>
@@ -241,18 +258,23 @@ export default async function StatePage({
             <div className="rounded-xl border border-amber/40 bg-gradient-to-b from-amber/15 to-panel p-6">
               <h3 className="font-display text-xl font-medium">Sell into {s.name}?</h3>
               <p className="mt-2 text-sm leading-relaxed text-smoke">
-                Get every new {s.name} filing in your inbox the morning it posts.
+                Get every new {s.name} filing in your inbox the morning it posts — free for 7 days.
               </p>
-              <Link href="/#pricing" className="mt-4 flex items-center justify-center gap-1.5 rounded-md bg-amber px-4 py-2.5 font-mono text-[11px] font-semibold tracking-[0.12em] text-ink transition-transform hover:scale-[1.02]">
-                START $129/MO <ArrowRight className="h-3.5 w-3.5" />
+              <Link
+                href="/#pricing"
+                className="mt-4 flex items-center justify-center gap-1.5 rounded-md bg-amber px-4 py-2.5 font-mono text-[11px] font-semibold tracking-[0.12em] text-[#140b0e] transition-transform hover:scale-[1.02]"
+              >
+                START 7-DAY FREE TRIAL <ArrowRight className="h-3.5 w-3.5" />
               </Link>
             </div>
 
             <div className="rounded-xl border border-line bg-panel p-6">
-              <h3 className="font-mono text-[10px] tracking-[0.25em] text-faint">TRACKED RECORDS</h3>
+              <h3 className="font-mono text-[10px] tracking-[0.25em] text-faint">
+                TRACKED RECORDS
+              </h3>
               <p className="mt-3 text-sm leading-relaxed text-smoke">
-                Official state licensing records, refreshed daily. Every filing is preserved
-                with its record identifier and detection time for auditability.
+                Official licensing records, refreshed daily. Every filing is preserved with its
+                record identifier and detection time for auditability.
               </p>
             </div>
           </aside>
@@ -266,7 +288,9 @@ export default async function StatePage({
               <details key={f.q} className="group py-5">
                 <summary className="flex cursor-pointer list-none items-center justify-between gap-4 text-base font-medium text-cream">
                   {f.q}
-                  <span className="font-mono text-amber transition-transform group-open:rotate-45">+</span>
+                  <span className="font-mono text-amber transition-transform group-open:rotate-45">
+                    +
+                  </span>
                 </summary>
                 <p className="mt-3 pr-8 text-sm leading-relaxed text-smoke">{f.a}</p>
               </details>

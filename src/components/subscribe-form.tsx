@@ -4,39 +4,41 @@ import { useState, type FormEvent } from "react";
 import { ArrowRight, CheckCircle2, LoaderCircle } from "lucide-react";
 import StatePicker from "@/components/state-picker";
 
-type Phase = "idle" | "sending" | "waitlist" | "error";
+type Phase = "idle" | "sending" | "done" | "error";
 
-// Ask for email + states. If payments are live the server answers with a
-// checkout link and we hop straight there; otherwise we confirm the
-// early-access spot.
 export default function SubscribeForm({ plan }: { plan: "solo" | "pro" }) {
+  const maxStates = plan === "solo" ? 1 : 3;
   const [email, setEmail] = useState("");
   const [states, setStates] = useState<string[]>(["TX"]);
   const [phase, setPhase] = useState<Phase>("idle");
   const [message, setMessage] = useState("");
 
-  // Referral/partner attribution from the URL (?ref=someone@email.com)
-  let ref = "";
-  if (typeof window !== "undefined") {
-    ref = new URLSearchParams(window.location.search).get("ref") ?? "";
-  }
-
   function toggleState(s: string) {
-    setStates((prev) =>
-      prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]
-    );
+    setStates((prev) => {
+      if (prev.includes(s)) return prev.filter((x) => x !== s);
+      if (prev.length >= maxStates) return prev;
+      return [...prev, s];
+    });
   }
 
-  async function submit(e: FormEvent) {
-    e.preventDefault();
+  async function submitFlow(immediateCheckout: boolean) {
     if (phase === "sending") return;
+    if (!states.length) {
+      setPhase("error");
+      setMessage("Please pick at least one state first.");
+      return;
+    }
     setPhase("sending");
     setMessage("");
+    const ref =
+      typeof window !== "undefined"
+        ? (new URLSearchParams(window.location.search).get("ref") ?? "")
+        : "";
     try {
       const res = await fetch("/api/subscribe", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, states, plan, ref }),
+        body: JSON.stringify({ email, states, plan, ref, immediateCheckout }),
       });
       const data = await res.json();
       if (data.checkoutUrl) {
@@ -44,45 +46,54 @@ export default function SubscribeForm({ plan }: { plan: "solo" | "pro" }) {
         return;
       }
       if (data.ok) {
-        setPhase("waitlist");
-        setMessage(data.message ?? "You are on the list.");
+        setPhase("done");
+        setMessage(data.message ?? "Your 7-day free trial is active.");
       } else {
         setPhase("error");
         setMessage(
-          data.error === "invalid_email"
-            ? "That email does not look right — check it once."
-            : "Something hiccuped. Try again."
+          data.message ??
+          (data.error === "invalid_email"
+            ? "That email does not look right — please double-check it."
+            : data.error === "pick_at_least_one_state"
+              ? "Please select at least one state."
+              : "Something hiccuped. Please try again.")
         );
       }
     } catch {
       setPhase("error");
-      setMessage("Network hiccup. Try again.");
+      setMessage("Network hiccup. Please try again.");
     }
   }
 
-  if (phase === "waitlist") {
+  function onSubmit(e: FormEvent) {
+    e.preventDefault();
+    void submitFlow(false);
+  }
+
+  if (phase === "done") {
     return (
-      <div className="flex items-start gap-3 rounded-lg border border-leaf/30 bg-leaf/10 p-4">
+      <div className="flex items-start gap-3 rounded-lg border border-leaf/40 bg-panel p-4 text-left">
         <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-leaf" />
         <div>
           <p className="text-sm font-semibold text-cream">You are locked in.</p>
-          <p className="mt-0.5 font-mono text-xs leading-relaxed text-smoke">{message}</p>
+          <p className="mt-1 font-mono text-xs leading-relaxed text-smoke">{message}</p>
         </div>
       </div>
     );
   }
 
   return (
-    <form onSubmit={submit} className="space-y-3">
+    <form onSubmit={onSubmit} className="space-y-3">
       <div>
-        <p className="font-mono text-[10px] tracking-[0.18em] text-faint">
+        <p className="font-mono text-[10px] tracking-[0.18em] opacity-75">
           {plan === "solo" ? "PICK YOUR STATE" : "PICK UP TO 3 STATES"}
         </p>
         <div className="mt-2">
           <StatePicker
             selected={states}
             onToggle={toggleState}
-            max={plan === "solo" ? 1 : 3}
+            onClear={() => setStates([])}
+            max={maxStates}
           />
         </div>
       </div>
@@ -97,16 +108,27 @@ export default function SubscribeForm({ plan }: { plan: "solo" | "pro" }) {
         />
         <button
           type="submit"
-          className="flex items-center gap-1.5 rounded-md bg-amber px-4 py-2.5 font-mono text-[11px] font-semibold tracking-[0.12em] text-ink transition-transform hover:scale-[1.03] disabled:opacity-60"
+          className="flex shrink-0 items-center gap-1.5 rounded-md bg-amber px-4 py-2.5 font-mono text-[11px] font-semibold tracking-[0.12em] text-[#140b0e] transition-transform hover:scale-[1.03] disabled:opacity-60"
           disabled={phase === "sending"}
         >
           {phase === "sending" ? (
             <LoaderCircle className="h-4 w-4 animate-spin" />
           ) : (
             <>
-              START <ArrowRight className="h-3.5 w-3.5" />
+              START FREE <ArrowRight className="h-3.5 w-3.5" />
             </>
           )}
+        </button>
+      </div>
+      <div className="flex items-center justify-between gap-2 text-[11px]">
+        <span className="font-mono text-[10px] opacity-70">7 days free · no card</span>
+        <button
+          type="button"
+          disabled={phase === "sending" || !email.includes("@")}
+          onClick={() => void submitFlow(true)}
+          className="font-mono text-[10px] underline underline-offset-2 opacity-75 transition-opacity hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          Skip trial &amp; subscribe now
         </button>
       </div>
       {phase === "error" && (

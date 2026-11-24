@@ -50,7 +50,7 @@ export default function TermsPage() {
         <p>We may suspend access for payment failure, security risk, unlawful use or material breach. You remain responsible for charges incurred before termination.</p>
       </LegalSection>
       <LegalSection title="11. Contact and disputes">
-        <p>Contact <a className="text-amber" href={`mailto:${PUBLIC_CONFIG.contactEmail}`}>{PUBLIC_CONFIG.contactEmail}</a> first so we can try to resolve a concern informally. Applicable mandatory consumer or local laws are not waived by these terms. The operator should obtain local counsel before launch to select governing-law and dispute clauses appropriate to its registered location.</p>
+        <p>Contact <a className="text-amber" href={`mailto:${PUBLIC_CONFIG.contactEmail}`}>{PUBLIC_CONFIG.contactEmail}</a> first so we can try to resolve any concern informally within 14 days. Applicable mandatory consumer or local laws are not waived by these terms.</p>
       </LegalSection>
     </LegalPage>
   );

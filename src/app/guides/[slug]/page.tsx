@@ -18,7 +18,11 @@ export async function generateMetadata({
   const { slug } = await params;
   const guide = GUIDES.find((g) => g.slug === slug);
   if (!guide) return { title: "Guide not found" };
-  return { title: guide.title, description: guide.description };
+  return {
+    title: guide.title,
+    description: guide.description,
+    alternates: { canonical: `/guides/${guide.slug}` },
+  };
 }
 
 export default async function GuidePage({

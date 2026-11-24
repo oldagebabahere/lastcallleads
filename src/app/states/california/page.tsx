@@ -1,14 +1,15 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ArrowRight, MapPin } from "lucide-react";
-import { desc, sql } from "drizzle-orm";
+import { MapPin } from "lucide-react";
+import { and, desc, eq, notLike, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { ensureSchema } from "@/db/bootstrap";
 import { events, licenses } from "@/db/schema";
 import Reveal from "@/components/reveal";
 import SubscribeForm from "@/components/subscribe-form";
 import { Footer, Nav } from "@/components/ui";
-import { citySlug } from "@/lib/queries";
+import { citySlug, embargoCutoff, maskName } from "@/lib/queries";
+import { isJunkEntity } from "@/lib/lead-score";
 
 export const dynamic = "force-dynamic";
 
@@ -16,10 +17,9 @@ export const metadata: Metadata = {
   title: "California liquor-license filings — bars & restaurants opening soon",
   description:
     "California alcohol-license filings tracked daily: new bars, restaurants and package stores before they open. Live city pages, updated every morning.",
+  alternates: { canonical: "/states/california" },
 };
 
-// California ABC licence types in plain English — used to decode filings
-// so a subscriber knows what kind of venue is coming.
 const CA_TYPES: { code: string; label: string }[] = [
   { code: "Type 47", label: "On-sale general — full bar, bona-fide restaurant" },
   { code: "Type 48", label: "On-sale general — full bar, bar or nightclub" },
@@ -30,8 +30,6 @@ const CA_TYPES: { code: string; label: string }[] = [
 ];
 
 export default async function CaliforniaPage() {
-  await ensureSchema();
-
   let total = 0;
   let pending = 0;
   let cities: { city: string; n: number }[] = [];
@@ -45,6 +43,7 @@ export default async function CaliforniaPage() {
   }[] = [];
 
   try {
+    await ensureSchema();
     const [totals, pend, cityRows, recentRows] = await Promise.all([
       db
         .select({ n: sql<number>`count(*)::int` })
@@ -73,17 +72,21 @@ export default async function CaliforniaPage() {
           occurredAt: events.occurredAt,
         })
         .from(events)
-        .where(sql`${events.state} = 'CA'`)
+        .where(and(eq(events.state, "CA"), notLike(events.licenseKey, "TTB-%")))
         .orderBy(desc(events.occurredAt))
-        .limit(8),
+        .limit(16),
     ]);
     total = totals[0]?.n ?? 0;
     pending = pend[0]?.n ?? 0;
     cities = cityRows as unknown as { city: string; n: number }[];
-    recent = recentRows as unknown as typeof recent;
+    recent = (recentRows as unknown as typeof recent)
+      .filter((e) => !isJunkEntity(e.tradeName, e.ownerName, e.typeName))
+      .slice(0, 8);
   } catch {
     // page renders with whatever is available
   }
+
+  const cut = embargoCutoff();
 
   return (
     <main className="min-h-screen">
@@ -91,13 +94,12 @@ export default async function CaliforniaPage() {
       <div className="mx-auto max-w-5xl px-5 pb-20 pt-28">
         <p className="eyebrow">[ Coverage · CA ]</p>
         <h1 className="font-display mt-5 max-w-3xl text-4xl font-medium leading-tight sm:text-6xl">
-          California filings,{" "}
-          <span className="italic text-amber">watched daily.</span>
+          California filings, <span className="italic text-amber">watched daily.</span>
         </h1>
         <p className="mt-5 max-w-2xl text-base leading-relaxed text-smoke">
-          The country&apos;s largest bar and restaurant market. We track alcohol-licence
-          records for new venues — bars, restaurants and package stores — and deliver
-          them to subscribers each morning.
+          The country&apos;s largest bar and restaurant market. We stream the official California
+          ABC daily export for new venues — bars, restaurants and package stores — and deliver them
+          to subscribers each morning.
         </p>
 
         {/* live counts */}
@@ -105,13 +107,11 @@ export default async function CaliforniaPage() {
           {[
             { v: total.toLocaleString(), l: "CALIFORNIA RECORDS TRACKED" },
             { v: pending.toLocaleString(), l: "APPLICATIONS IN REVIEW" },
-            { v: String(cities.length), l: "CITIES WITH ACTIVITY" },
+            { v: String(cities.length), l: "TOP CITIES WITH ACTIVITY" },
           ].map((x) => (
             <div key={x.l} className="bg-panel p-6">
               <p className="font-display text-3xl font-semibold text-cream">{x.v}</p>
-              <p className="mt-1 font-mono text-[10px] tracking-[0.18em] text-faint">
-                {x.l}
-              </p>
+              <p className="mt-1 font-mono text-[10px] tracking-[0.18em] text-faint">{x.l}</p>
             </div>
           ))}
         </div>
@@ -120,12 +120,8 @@ export default async function CaliforniaPage() {
         {cities.length > 0 && (
           <Reveal>
             <section className="mt-14">
-              <h2 className="font-display text-2xl font-medium text-cream">
-                Cities with activity
-              </h2>
-              <p className="mt-2 text-base text-smoke">
-                Tap any city for its live filing list.
-              </p>
+              <h2 className="font-display text-2xl font-medium text-cream">Cities with activity</h2>
+              <p className="mt-2 text-base text-smoke">Tap any city for its live filing list.</p>
               <div className="mt-6 flex flex-wrap gap-2">
                 {cities.map((c) => (
                   <Link
@@ -142,7 +138,7 @@ export default async function CaliforniaPage() {
           </Reveal>
         )}
 
-        {/* recent filings */}
+        {/* recent filings (7-day embargo enforced!) */}
         {recent.length > 0 && (
           <Reveal delay={80}>
             <section className="mt-14">
@@ -150,41 +146,58 @@ export default async function CaliforniaPage() {
                 Recent California filings
               </h2>
               <div className="mt-6 divide-y divide-line border-y border-line">
-                {recent.map((e) => (
-                  <div key={e.id} className="grid gap-2 py-4 sm:grid-cols-[90px_1fr_auto]">
-                    <span className="font-mono text-[11px] text-faint">
-                      {e.occurredAt
-                        ? new Date(e.occurredAt).toLocaleDateString("en-US", {
-                            month: "short",
-                            day: "numeric",
-                          })
-                        : "—"}
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block text-sm text-cream">
-                        {e.tradeName ?? e.ownerName ?? "New venue"}
+                {recent.map((e) => {
+                  const locked = e.occurredAt ? e.occurredAt.getTime() > cut.getTime() : false;
+                  const displayName = locked
+                    ? maskName(e.tradeName ?? e.ownerName ?? "Applicant")
+                    : (e.tradeName ?? e.ownerName ?? "New venue");
+                  return (
+                    <Link
+                      key={e.id}
+                      href={locked ? "/#pricing" : `/feed/${e.id}`}
+                      className="grid gap-2 py-4 transition-colors hover:bg-panel/60 sm:grid-cols-[90px_1fr_auto]"
+                    >
+                      <span className="font-mono text-[11px] text-faint">
+                        {e.occurredAt
+                          ? new Date(e.occurredAt).toLocaleDateString("en-US", {
+                              month: "short",
+                              day: "numeric",
+                            })
+                          : "—"}
                       </span>
-                      <span className="mt-0.5 block font-mono text-[11px] text-smoke">
-                        {[e.city, e.typeName].filter(Boolean).join(" · ")}
+                      <span className="min-w-0">
+                        <span
+                          className={`block text-sm ${
+                            locked ? "locked-name text-smoke" : "text-cream"
+                          }`}
+                        >
+                          {displayName}
+                        </span>
+                        <span className="mt-0.5 block font-mono text-[11px] text-smoke">
+                          {[e.city, e.typeName].filter(Boolean).join(" · ")}
+                        </span>
                       </span>
-                    </span>
-                    <span className="font-mono text-[10px] text-amber">CA</span>
-                  </div>
-                ))}
+                      <span className="font-mono text-[10px] text-amber">CA</span>
+                    </Link>
+                  );
+                })}
               </div>
+              <p className="mt-3 font-mono text-[10px] tracking-[0.16em] text-faint">
+                NAMES FROM THE LAST 7 DAYS ARE MEMBER-ONLY · CALIFORNIA ABC DAILY EXPORT
+              </p>
             </section>
           </Reveal>
         )}
 
-        {/* licence types */}
+        {/* license types */}
         <Reveal delay={120}>
           <section className="mt-14">
             <h2 className="font-display text-2xl font-medium text-cream">
               What the California codes mean
             </h2>
             <p className="mt-2 max-w-2xl text-base text-smoke">
-              California uses its own licence-type codes. Here is how we decode them
-              in subscriber alerts.
+              California uses numeric ABC license codes. Here is how we decode them in subscriber
+              alerts.
             </p>
             <div className="mt-6 divide-y divide-line border-y border-line">
               {CA_TYPES.map((t) => (
@@ -206,8 +219,7 @@ export default async function CaliforniaPage() {
               Get California filings each morning.
             </h2>
             <p className="mt-2 max-w-md text-sm leading-relaxed text-smoke">
-              Pick California plus any other state. Your first digest lands at the next
-              morning sweep.
+              Start a 7-day free trial — no card required. Pick California plus any other state.
             </p>
             <div className="mt-6 max-w-md">
               <SubscribeForm plan="solo" />

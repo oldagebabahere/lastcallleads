@@ -123,7 +123,7 @@ export default async function CustomersPage({
           {/* last 25 emails */}
           <div className="mt-6 overflow-x-auto">
             <p className="mb-2 font-mono text-sm font-semibold tracking-[0.12em] text-cream/70">
-              LAST 25 EMAILS (naya email har subah 12:00 UTC / shaam 5:30 baje)
+              LAST 25 EMAILS (daily morning sweep runs at 11:30 UTC)
             </p>
             <table className="w-full min-w-[720px] text-left text-sm">
               <thead>

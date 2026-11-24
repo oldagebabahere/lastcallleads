@@ -1,8 +1,7 @@
 "use client";
 
-// Map view — every harvested prospect as a pin. Leaflet + OpenStreetMap
-// tiles load from CDN; if the network blocks them the legend + list below
-// the map still work.
+// Map view — every harvested prospect as a pin.
+// All popup fields are strictly HTML-escaped and URL-validated (prevents stored XSS).
 import { useEffect, useRef, useState } from "react";
 
 export type MapPin = {
@@ -20,6 +19,7 @@ const COLORS: Record<string, string> = {
   attorney: "#e0a458",
   insurance: "#4ea8de",
   beverage: "#c4435a",
+  distributor: "#9b72cf",
   bar: "#7bc96f",
 };
 
@@ -27,8 +27,29 @@ const LABELS: Record<string, string> = {
   attorney: "Attorneys",
   insurance: "Insurance agents",
   beverage: "Beverage sellers",
+  distributor: "Distributors",
   bar: "Bars",
 };
+
+function escHtml(s: string | null | undefined): string {
+  return (s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function safeHttpUrl(raw: string | null): string | null {
+  if (!raw) return null;
+  try {
+    const u = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+    return u.toString();
+  } catch {
+    return null;
+  }
+}
 
 export default function ProspectMap({ pins }: { pins: MapPin[] }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -37,6 +58,14 @@ export default function ProspectMap({ pins }: { pins: MapPin[] }) {
 
   useEffect(() => {
     let cancelled = false;
+    if ((window as unknown as { L?: unknown }).L) {
+      queueMicrotask(() => {
+        if (!cancelled) setReady(true);
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
     const css = document.createElement("link");
     css.rel = "stylesheet";
     css.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
@@ -89,11 +118,14 @@ export default function ProspectMap({ pins }: { pins: MapPin[] }) {
         weight: 1,
       });
       m.addTo(map);
+      const safeUrl = safeHttpUrl(p.website);
       m.bindPopup(
-        `<b>${p.name}</b><br/>${LABELS[p.category] ?? p.category}<br/>${
-          p.city ? p.city + ", " : ""
-        }${p.state}${p.phone ? "<br/>☎ " + p.phone : ""}${
-          p.website ? '<br/><a href="' + p.website + '" target="_blank">website</a>' : ""
+        `<b>${escHtml(p.name)}</b><br/>${escHtml(LABELS[p.category] ?? p.category)}<br/>${
+          p.city ? escHtml(p.city) + ", " : ""
+        }${escHtml(p.state)}${p.phone ? "<br/>Phone: " + escHtml(p.phone) : ""}${
+          safeUrl
+            ? `<br/><a href="${escHtml(safeUrl)}" target="_blank" rel="noopener noreferrer">website</a>`
+            : ""
         }`
       );
       if (first) {
@@ -109,18 +141,23 @@ export default function ProspectMap({ pins }: { pins: MapPin[] }) {
 
   return (
     <div>
-      {/* legend */}
       <div className="flex flex-wrap gap-3">
         {Object.entries(LABELS).map(([id, label]) => (
-          <span key={id} className="flex items-center gap-1.5 font-mono text-xs tracking-[0.12em] text-cream/70">
-            <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: COLORS[id] }} />
+          <span
+            key={id}
+            className="flex items-center gap-1.5 font-mono text-xs tracking-[0.12em] text-cream/70"
+          >
+            <span
+              className="inline-block h-2.5 w-2.5 rounded-full"
+              style={{ background: COLORS[id] }}
+            />
             {label.toUpperCase()}
           </span>
         ))}
       </div>
       {failed ? (
         <div className="mt-4 rounded-xl border border-line bg-panel p-6 font-mono text-xs text-cream/70">
-          Map tiles is network pe load nahi hue — list neeche phir bhi kaam karta hai.
+          Map tiles could not load on this network — CSV export and state tables still work normally.
         </div>
       ) : (
         <div

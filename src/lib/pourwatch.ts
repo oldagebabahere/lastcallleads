@@ -1,21 +1,17 @@
 // PourWatch — the self-healing watchdog.
 //
 // Every aggregator run flows through recordRunResult():
-//   • logs the run to ingest_runs (aggregator sources never wrote there before)
-//   • applies health rules: HTTP/parse errors, 0 rows, sudden half-drop
-//   • after 3 consecutive failures the source is AUTO-PAUSED with ONE email
-//   • paused sources are skipped by future ingests (the rest keep flowing)
-//   • the daily /api/cron/pourwatch sweep bumps stale sources, re-probes
-//     paused ones weekly, and auto-resumes + emails "recovered" on success
-//
-// The fake-leads (ID-format change) guard lives in ingest-aggregator and
-// BLOCKS the insert before bad data ever reaches customers; the blocked run
-// arrives here as a normal failure.
+//   • logs the run to ingest_runs
+//   • applies health rules: HTTP/parse errors, unexpected 0 rows, sudden collapse
+//   • after 3 consecutive failures the source is AUTO-PAUSED with ONE ops email
+//   • paused sources are skipped by regular ingests (the rest keep flowing)
+//   • reprobe + autoHealSource run automatically on schedule (weekly + /api/cron/pourwatch)
+//     and auto-resume + email "recovered" on success.
 import { and, desc, eq } from "drizzle-orm";
 import { db, pool } from "@/db";
 import { ingestRuns, sourceHealth } from "@/db/schema";
 import { Resend } from "resend";
-import { fetchSocrata } from "@/lib/sources";
+import { fetchSocrata, fetchWithRetry } from "@/lib/sources";
 import { alertFrom } from "@/lib/email";
 import { BRAND } from "@/lib/brand";
 
@@ -30,11 +26,11 @@ export type RunResult = {
   rowsSeen: number;
   newLicenses: number;
   newEvents: number;
+  allowEmpty?: boolean;
   error?: string;
 };
 
 type HealthRow = typeof sourceHealth.$inferSelect;
-
 type CountRow = { n: number | string };
 
 // ---------- email ----------
@@ -58,9 +54,15 @@ export async function sendOpsAlert(subject: string, body: string): Promise<boole
         html,
       });
       if (res.error) throw new Error(String(res.error));
+      await pool
+        .query(
+          `INSERT INTO email_log (to_email, subject, status, detail, event_count)
+           VALUES ($1, $2, 'sent', 'pourwatch alert', 0)`,
+          [opsEmail, subject]
+        )
+        .catch(() => undefined);
       return true;
     }
-    // No mail configured (e.g. sandbox): still leave an ops trail.
     await pool.query(
       `INSERT INTO email_log (to_email, subject, status, detail, event_count)
        VALUES ('ops@internal', $1, 'logged', $2, 0)`,
@@ -98,19 +100,32 @@ export async function priorMedianRows(label: string): Promise<number> {
 export async function recordRunResult(r: RunResult): Promise<HealthRow | null> {
   const now = new Date();
 
-  // 1) log the run
+  // 1) load prior median BEFORE logging the current run
+  const median = await priorMedianRows(r.label);
+
+  // 2) evaluate health rules
+  let failureReason: string | null = null;
+  if (!r.ok) {
+    failureReason = r.error ?? "run failed";
+  } else if (!r.allowEmpty && r.rowsSeen === 0 && median >= 10) {
+    failureReason = "0 rows returned (source previously had data)";
+  } else if (!r.allowEmpty && median >= 50 && r.rowsSeen < median * 0.35) {
+    failureReason = `rows collapsed: ${r.rowsSeen} vs median ${median}`;
+  }
+
+  // 3) log the run (reflecting health evaluation)
   await db.insert(ingestRuns).values({
     source: r.label,
-    ok: r.ok,
+    ok: !failureReason,
     rowsSeen: r.rowsSeen,
     newLicenses: r.newLicenses,
     newEvents: r.newEvents,
-    error: r.error ?? null,
+    error: failureReason,
     startedAt: now,
     finishedAt: now,
   });
 
-  // 2) load or init the health row
+  // 4) load or init the health row
   let row = (
     await db.select().from(sourceHealth).where(eq(sourceHealth.source, r.label)).limit(1)
   )[0];
@@ -129,22 +144,9 @@ export async function recordRunResult(r: RunResult): Promise<HealthRow | null> {
     }
   }
 
-  const median = await priorMedianRows(r.label);
-
-  // 3) health rules — a "failure" is any of:
-  //    transport error, 0 rows on a source that historically had data,
-  //    or rows collapsing to <40% of the recent median
-  let failureReason: string | null = null;
-  if (!r.ok) {
-    failureReason = r.error ?? "run failed";
-  } else if (r.rowsSeen === 0 && median >= 10) {
-    failureReason = "0 rows returned (source previously had data)";
-  } else if (median >= 20 && r.rowsSeen < median * 0.4) {
-    failureReason = `rows collapsed: ${r.rowsSeen} vs median ${median}`;
-  }
-
   if (!failureReason) {
     const wasPaused = row?.status === "paused";
+    const updatedMedian = r.rowsSeen > 0 ? Math.max(median, Math.min(r.rowsSeen, median || r.rowsSeen)) : median;
     await db
       .update(sourceHealth)
       .set({
@@ -152,7 +154,7 @@ export async function recordRunResult(r: RunResult): Promise<HealthRow | null> {
         pausedReason: null,
         consecutiveFailures: 0,
         lastRows: r.rowsSeen,
-        medianRows: median,
+        medianRows: updatedMedian,
         lastOkAt: now,
         lastRunAt: now,
         lastProbeAt: now,
@@ -163,7 +165,7 @@ export async function recordRunResult(r: RunResult): Promise<HealthRow | null> {
     if (wasPaused) {
       await sendOpsAlert(
         `Recovered: ${r.label} is live again`,
-        `<p><strong>${r.label}</strong> completed successfully (${r.rowsSeen} rows) and has been auto-resumed. Customer alerts for its states are flowing again.</p>`
+        `<p><strong>${r.label}</strong> completed successfully (${r.rowsSeen.toLocaleString()} rows) and has been auto-resumed. Customer alerts for its states are flowing again.</p>`
       );
     }
   } else {
@@ -174,7 +176,7 @@ export async function recordRunResult(r: RunResult): Promise<HealthRow | null> {
       .update(sourceHealth)
       .set({
         status: shouldPause ? "paused" : (row?.status ?? "live"),
-        pausedReason: shouldPause ? failureReason : null,
+        pausedReason: shouldPause ? failureReason : (row?.pausedReason ?? null),
         consecutiveFailures: failures,
         lastRows: r.rowsSeen,
         medianRows: median,
@@ -192,8 +194,7 @@ export async function recordRunResult(r: RunResult): Promise<HealthRow | null> {
         `Paused: ${r.label} failed ${PAUSE_AFTER}× in a row`,
         `<p><strong>${r.label}</strong> has been auto-paused.</p>
          <p><strong>Reason:</strong> ${failureReason}</p>
-         <p>Other states keep flowing — no customer email is affected except this source's states.
-         PourWatch will re-probe it weekly and resume it automatically when it recovers.
+         <p>Other states keep flowing — PourWatch will automatically re-probe and attempt catalog self-healing weekly.
          To force a manual retry now: <code>/api/cron/ingest?aggregator=true&amp;state=${r.state}&amp;force=1</code></p>`
       );
     }
@@ -206,10 +207,9 @@ export async function recordRunResult(r: RunResult): Promise<HealthRow | null> {
 
 // ---------- auto-heal: find a replacement dataset ourselves ----------
 
-// Structural subset of StateSpec (avoids a circular import with the aggregator).
 export type HealSpec = {
   label: string;
-  socrata?: { host: string; dataset: string; where?: string; limit?: number };
+  socrata?: { host: string; dataset: string; where?: string; order?: string; limit?: number };
   map: (rec: Record<string, unknown>) => unknown | null;
   healKeywords?: string;
 };
@@ -227,10 +227,9 @@ export async function getOverrideDataset(label: string): Promise<string | null> 
 }
 
 /**
- * A Socrata dataset died? Search the portal's own catalog, trial-fetch each
- * candidate through the EXISTING column map, and adopt the first one that
- * maps cleanly (>=100 rows and >=70% map rate). Wrong-schema datasets are
- * rejected automatically, so we never adopt garbage.
+ * When a Socrata dataset dies, search the portal's catalog, trial-fetch each
+ * candidate through the existing column map, and adopt the first one that maps
+ * cleanly (>=50 rows and >=70% map rate).
  */
 export async function autoHealSource(
   spec: HealSpec
@@ -245,13 +244,16 @@ export async function autoHealSource(
     const catUrl = `https://api.us.socrata.com/api/catalog/v1?domains=${
       spec.socrata.host
     }&q=${encodeURIComponent(q)}&limit=10&only=dataset`;
-    const res = await fetch(catUrl, {
-      headers: {
-        Accept: "application/json",
-        "User-Agent": "pourwatch/1.0 (+public-records-monitor)",
+    const res = await fetchWithRetry(
+      catUrl,
+      {
+        headers: {
+          Accept: "application/json",
+          "User-Agent": "LastCallLeads-PourWatch/2.0 (+public-records-monitor)",
+        },
       },
-      cache: "no-store",
-    });
+      { timeoutMs: 12_000, retries: 1 }
+    );
     if (!res.ok) return { healed: false, detail: `catalog responded ${res.status}` };
     const cat = (await res.json()) as {
       results?: { resource?: { id?: string; name?: string } }[];
@@ -265,21 +267,23 @@ export async function autoHealSource(
       .slice(0, 5);
     for (const cand of candidates) {
       try {
-        const rows = await fetchSocrata(spec.socrata.host, cand.id!, { limit: 200 });
+        const rows = await fetchSocrata(spec.socrata.host, cand.id, {
+          limit: 150,
+          timeoutMs: 10_000,
+        });
         if (!rows.length) continue;
         let mapped = 0;
         for (const r of rows) if (spec.map(r) !== null) mapped++;
-        if (mapped >= 100 && mapped / rows.length >= 0.7) {
+        if (mapped >= 30 && mapped / rows.length >= 0.7) {
           await db
             .update(sourceHealth)
             .set({ overrideDataset: cand.id, updatedAt: new Date() })
             .where(eq(sourceHealth.source, spec.label));
           await sendOpsAlert(
-            `Self-healed: ${spec.label} found a new dataset on its own`,
+            `Self-healed: ${spec.label} switched to replacement dataset`,
             `<p><strong>${spec.label}</strong> broke, searched the portal catalog, and switched itself to a replacement dataset.</p>
              <p>New dataset: <strong>${cand.id}</strong> — “${cand.name ?? ""}”<br/>
-             ${mapped}/${rows.length} trial rows mapped cleanly through the existing column map.</p>
-             <p>No action needed — this is just a receipt.</p>`
+             ${mapped}/${rows.length} trial rows mapped cleanly through the existing column map.</p>`
           );
           return { healed: true, detail: `adopted ${cand.id} (${cand.name ?? "unnamed"})` };
         }
@@ -296,21 +300,24 @@ export async function autoHealSource(
   }
 }
 
-// ---------- daily sweep (cron /api/cron/pourwatch) ----------
+// ---------- daily sweep ----------
 
-/** Live sources with no OK run in 48h count as a failure. Returns bumped labels. */
-export async function sweepStale(labels: string[]): Promise<string[]> {
+/** Live sources with no OK run in 48h (or 96h for heavy/3x-week feeds) get a failure strike. */
+export async function sweepStale(
+  labels: string[],
+  heavyLabels: Set<string> = new Set()
+): Promise<string[]> {
   const bumped: string[] = [];
   const rows = await db.select().from(sourceHealth);
   const bySource = new Map(rows.map((r) => [r.source, r]));
-  const cutoff = Date.now() - STALE_HOURS * 3600_000;
+  const now = Date.now();
 
   for (const label of labels) {
     const row = bySource.get(label);
     if (!row || row.status === "paused") continue;
+    const maxHours = heavyLabels.has(label) ? 96 : STALE_HOURS;
     const lastOk = row.lastOkAt ? new Date(row.lastOkAt).getTime() : 0;
-    if (lastOk >= cutoff) continue;
-    // synthetic failure for staleness
+    if (lastOk >= now - maxHours * 3600_000) continue;
     await recordRunResult({
       label,
       state: row.state,
@@ -318,7 +325,7 @@ export async function sweepStale(labels: string[]): Promise<string[]> {
       rowsSeen: 0,
       newLicenses: 0,
       newEvents: 0,
-      error: `no successful run in 48+ hours (last ok ${
+      error: `no successful run in ${maxHours}+ hours (last ok ${
         row.lastOkAt ? new Date(row.lastOkAt).toISOString().slice(0, 16) : "never"
       })`,
     });

@@ -2,8 +2,9 @@
 // database so the site renders beautifully even before the first pull.
 import { db } from "@/db";
 import { ensureSchema } from "@/db/bootstrap";
-import { desc, sql } from "drizzle-orm";
-import { events, ingestRuns, licenses, subscribers } from "@/db/schema";
+import { and, desc, lte, notLike, sql } from "drizzle-orm";
+import { events, ingestRuns, licenses, subscribers, type FilingEvent } from "@/db/schema";
+import { isJunkEntity } from "@/lib/lead-score";
 
 export type SiteStats = {
   watching: number;
@@ -13,6 +14,14 @@ export type SiteStats = {
   lastRunOk: boolean | null;
   activeSubscribers: number;
 };
+
+export function daysAgoDate(days: number): Date {
+  return new Date(Date.now() - days * 86_400_000);
+}
+
+export function hoursAgoMs(hours: number): number {
+  return Date.now() - hours * 3_600_000;
+}
 
 export async function getSiteStats(): Promise<SiteStats> {
   const empty: SiteStats = {
@@ -32,13 +41,15 @@ export async function getSiteStats(): Promise<SiteStats> {
         .groupBy(licenses.state),
       db.select({ n: sql<number>`count(*)::int` }).from(events),
       db
-        .select({ ok: ingestRuns.ok, finishedAt: ingestRuns.finishedAt, startedAt: ingestRuns.startedAt })
+        .select({
+          ok: ingestRuns.ok,
+          finishedAt: ingestRuns.finishedAt,
+          startedAt: ingestRuns.startedAt,
+        })
         .from(ingestRuns)
         .orderBy(desc(ingestRuns.id))
         .limit(1),
-      db
-        .select({ n: sql<number>`count(*)::int` })
-        .from(subscribers),
+      db.select({ n: sql<number>`count(*)::int` }).from(subscribers),
     ]);
     const watching = byState.reduce((a, b) => a + b.n, 0);
     return {
@@ -54,14 +65,29 @@ export async function getSiteStats(): Promise<SiteStats> {
   }
 }
 
-export async function getRecentEvents(limit = 14) {
+export async function getRecentEvents(
+  limit = 14,
+  opts?: { unlockedOnly?: boolean; includeTtb?: boolean }
+): Promise<FilingEvent[]> {
   try {
     await ensureSchema();
-    return await db
+    const conds = [];
+    if (!opts?.includeTtb) {
+      conds.push(notLike(events.licenseKey, "TTB-%"));
+    }
+    if (opts?.unlockedOnly) {
+      conds.push(lte(events.occurredAt, embargoCutoff()));
+    }
+    const raw = await db
       .select()
       .from(events)
+      .where(conds.length ? and(...conds) : undefined)
       .orderBy(desc(events.occurredAt))
-      .limit(limit);
+      .limit(limit * 2);
+
+    return raw
+      .filter((e) => !isJunkEntity(e.tradeName, e.ownerName, e.typeName))
+      .slice(0, limit);
   } catch {
     return [];
   }
@@ -70,7 +96,7 @@ export async function getRecentEvents(limit = 14) {
 export const FREE_DELAY_DAYS = 7;
 
 export function embargoCutoff(): Date {
-  return new Date(Date.now() - FREE_DELAY_DAYS * 86_400_000);
+  return daysAgoDate(FREE_DELAY_DAYS);
 }
 
 export function isLocked(occurredAt: Date | null): boolean {

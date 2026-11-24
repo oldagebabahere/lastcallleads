@@ -1,12 +1,14 @@
 // Texas — Texas Alcoholic Beverage Commission via the official Texas Open
 // Data Portal (Socrata). Two feeds:
-//  1) Pending applications  → the gold signal (someone is about to open)
-//  2) Active licenses       → newly issued licenses (just opened)
+//  1) Pending applications  -> earliest signal (venue about to open)
+//  2) Active licenses       -> newly issued licenses
 import {
   clean,
+  cleanCounty,
   cleanNumberId,
   cleanZip,
   fetchSocrata,
+  normalizeCity,
   NormalizedRecord,
   safeDate,
 } from "./sources";
@@ -71,25 +73,27 @@ export async function fetchTxPending(): Promise<NormalizedRecord[]> {
   });
   const out: NormalizedRecord[] = [];
   for (const r of rows) {
-    const appId = cleanNumberId(r.applicationid);
+    // TABC uses `application_id` (historically `applicationid`)
+    const appId = cleanNumberId(r.application_id ?? r.applicationid);
     if (!appId) continue;
     const type = clean(r.license_type);
     const owner = clean(r.owner);
+    const trade = clean(r.trade_name);
     out.push({
       state: "TX",
       key: `TX-P-${appId}`,
       kind: "pending",
-      status: clean(r.applicationstatus) ?? "Pending",
+      status: clean(r.applicationstatus ?? r.application_status) ?? "Pending",
       licenseType: type,
       typeName: txTypeName(type),
-      tradeName: null, // TABC pending feed lists the legal entity only
+      tradeName: trade ?? owner,
       ownerName: owner,
       phone: null,
       address: clean(r.address),
-      city: clean(r.city),
+      city: normalizeCity(r.city),
       zip: cleanZip(r.zip),
-      county: clean(r.county),
-      filedAt: safeDate(r.submission_date),
+      county: cleanCounty(r.county),
+      filedAt: safeDate(r.submission_date ?? r.application_submission_date),
       issuedAt: null,
       expiresAt: null,
       lat: null,
@@ -104,7 +108,7 @@ export async function fetchTxActive(): Promise<NormalizedRecord[]> {
   const rows = await fetchSocrata(HOST, ACTIVE, {
     where: "primary_status='Active'",
     order: "status_change_date DESC",
-    limit: 6000,
+    limit: 5000,
   });
   const out: NormalizedRecord[] = [];
   for (const r of rows) {
@@ -118,16 +122,16 @@ export async function fetchTxActive(): Promise<NormalizedRecord[]> {
       status: clean(r.primary_status) ?? "Active",
       licenseType: type,
       typeName: txTypeName(type),
-      tradeName: clean(r.trade_name),
+      tradeName: clean(r.trade_name) ?? clean(r.owner),
       ownerName: clean(r.owner),
       phone: clean(r.phone),
       address: clean(r.address),
-      city: clean(r.city),
+      city: normalizeCity(r.city),
       zip: cleanZip(r.zip),
-      county: clean(r.county),
+      county: cleanCounty(r.county),
       filedAt: safeDate(r.original_issue_date),
       issuedAt: safeDate(r.current_issued_date) ?? safeDate(r.status_change_date),
-      expiresAt: safeDate(r.expiration_date),
+      expiresAt: safeDate(r.expiration_date, { allowFutureYears: 10 }),
       lat: null,
       lng: null,
       sourceUrl: TX_ACTIVE_URL,

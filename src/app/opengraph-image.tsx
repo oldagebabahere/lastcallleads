@@ -58,7 +58,7 @@ export default function OGImage() {
             letterSpacing: 3,
           }}
         >
-          <span>TX + NY REGISTRIES · SWEPT DAILY</span>
+          <span>US LIQUOR REGISTRIES · SWEPT DAILY</span>
           <span style={{ color: "#e9a13b" }}>{BRAND.url.replace(/^https?:\/\//, "")}</span>
         </div>
       </div>

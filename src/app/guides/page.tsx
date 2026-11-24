@@ -9,6 +9,7 @@ export const metadata: Metadata = {
   title: "Guides — liquor-license intelligence, in plain English",
   description:
     "How to find new bars before competitors, Texas TABC timelines, New York SLA applications — practical guides for anyone selling to hospitality.",
+  alternates: { canonical: "/guides" },
 };
 
 export default function GuidesIndex() {

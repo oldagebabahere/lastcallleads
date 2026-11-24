@@ -1,17 +1,18 @@
-// Owner-facing automated tasks — the "everything else" the machine does:
-//   1) runTrialTips()  — day 1/3/5 tip emails to active trial users (retention)
-//   2) runDbBackup()   — weekly CSV of the real business assets (customers,
-//                        contact messages) emailed to OPS_EMAIL as attachments
-//   3) buildSocialPost() — Mon/Wed/Fri social post, AUTO-posted to any
-//                        platform with a webhook URL in env (Zapier / Make /
-//                        n8n); the email is confirmation + paste fallback
+// Automated retention & owner ops tasks:
+//   1) runTrialTips()    — day 1 / 3 / 5 onboarding tips to opted-in active trial users
+//   2) runDbBackup()     — weekly CSV backup of subscribers & contact messages to OPS_EMAIL
+//   3) buildSocialPost() — Mon/Wed/Fri social post auto-published via Zapier/Make/n8n webhooks
 import { db } from "@/db";
 import { contactMessages, emailLog, events, subscribers } from "@/db/schema";
-import { and, desc, eq, gt, sql } from "drizzle-orm";
-import { Resend } from "resend";
+import { and, desc, eq, gt, isNull, notLike, or, sql } from "drizzle-orm";
 import { BRAND } from "@/lib/brand";
 import { PUBLIC_CONFIG } from "@/lib/public-config";
 import { siteUrl } from "@/lib/site";
+import { alertFrom, isOwnerAddress } from "@/lib/email";
+import { isMailTransportConfigured, sendTransactionalMail } from "@/lib/mailer";
+import { publishLinkedInOfficial, sendTelegramOwner } from "@/lib/notify";
+import { stateFullName } from "@/lib/states";
+import { checkoutUpgradeUrl, prefsUrl, unsubscribeUrls } from "@/lib/unsubscribe";
 
 function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -19,7 +20,7 @@ function esc(s: string): string {
 
 function footerHtml(): string {
   return `<p style="color:#8d8375;font-size:11px;line-height:1.7;font-family:monospace">
-    ${esc(PUBLIC_CONFIG.legalName)} · ${esc(PUBLIC_CONFIG.postalAddress)}<br/>
+    ${esc(PUBLIC_CONFIG.legalName)}${PUBLIC_CONFIG.postalAddress ? ` · ${esc(PUBLIC_CONFIG.postalAddress)}` : ""}<br/>
     <a href="${siteUrl()}" style="color:#e9a13b">${esc(siteUrl().replace(/^https?:\/\//, ""))}</a>
   </p>`;
 }
@@ -29,108 +30,142 @@ async function sendToOwner(opts: {
   html: string;
   attachments?: { filename: string; content: string }[];
 }): Promise<{ sent: boolean; detail: string }> {
-  const ops = (process.env.OPS_EMAIL ?? "").trim().toLowerCase();
-  const key = process.env.RESEND_API_KEY;
-  const from = process.env.ALERT_FROM_EMAIL;
+  const ops = (process.env.OPS_EMAIL ?? process.env.SMTP_USER ?? "").trim().toLowerCase();
   if (!ops) return { sent: false, detail: "OPS_EMAIL not set" };
-  if (!key || !from) {
+  if (!isMailTransportConfigured()) {
     await db.insert(emailLog).values({
       toEmail: ops,
       subject: opts.subject,
       status: "dry_run",
-      detail: "RESEND_API_KEY / ALERT_FROM_EMAIL not set",
+      detail: "No RESEND_API_KEY or SMTP_USER/SMTP_PASS set",
     });
     return { sent: false, detail: "dry_run" };
   }
-  try {
-    const resend = new Resend(key);
-    const res = await resend.emails.send({
-      from,
-      to: ops,
-      subject: opts.subject,
-      html: opts.html,
-      ...(opts.attachments?.length
-        ? { attachments: opts.attachments.map((a) => ({ ...a })) }
-        : {}),
-    });
-    const ok = !res.error;
-    await db.insert(emailLog).values({
-      toEmail: ops,
-      subject: opts.subject,
-      status: ok ? "sent" : "error",
-      detail: ok ? "owner task" : String(res.error).slice(0, 200),
-    });
-    return ok ? { sent: true, detail: "sent" } : { sent: false, detail: "resend error" };
-  } catch (e) {
-    return { sent: false, detail: String(e).slice(0, 120) };
-  }
+  const res = await sendTransactionalMail({
+    from: alertFrom(),
+    to: ops,
+    subject: opts.subject,
+    html: opts.html,
+    attachments: opts.attachments,
+  });
+  await db.insert(emailLog).values({
+    toEmail: ops,
+    subject: opts.subject,
+    status: res.status,
+    detail: res.detail.slice(0, 200),
+  });
+  return { sent: res.status === "sent", detail: res.detail };
 }
 
 /* ------------------------------------------------------------------ */
 /* 1) TRIAL TIPS — day 1 / 3 / 5 of the 7-day trial                    */
 /* ------------------------------------------------------------------ */
-const TIPS: Record<number, { subject: string; body: string }> = {
-  1: {
+const TIPS: { minDay: number; subject: string; body: string }[] = [
+  {
+    minDay: 1,
     subject: "Tip 1 of 3 — call the NEW applications first",
-    body: `The freshest filings are the hottest: a venue that applied this week is 60–90 days from opening and hasn't chosen suppliers yet. Open today's digest, find the NEW APPLICATION rows, and call two of them before lunch. Two calls a day is the whole system.`,
+    body: `The freshest filings are the highest-converting leads: a venue that applied this week is 60–90 days from opening and hasn't chosen suppliers yet. Open today's digest, look for the FILED rows with a 70+ score, and call two before lunch.`,
   },
-  3: {
-    subject: "Tip 2 of 3 — one county, not the whole state",
-    body: `Don't chase the whole state. Pick the county you actually sell in and work every filing from the last 14 days. Reps who focus on one territory close 3–4x more than reps who skim everything. Use the county filter on the feed page.`,
+  {
+    minDay: 3,
+    subject: "Tip 2 of 3 — narrow to your exact ZIP codes",
+    body: `Don't sift through the whole state. Filter your morning digest down to your exact cities, ZIP codes, or venue types (e.g. Full Bars only) so every row in your inbox is a territory call.`,
   },
-  5: {
+  {
+    minDay: 5,
     subject: "Tip 3 of 3 — your trial ends in 2 days",
-    body: `Your trial closes soon. If the morning email earned you even one good conversation, keep it going — a single landed account pays for a full year of alerts. Your territory keeps filing whether you're watching or not.`,
+    body: `Your 7-day trial closes soon. One landed hospitality account typically pays for an entire year of daily alerts. Lock in your territory now so your morning feed doesn't pause.`,
   },
-};
+];
 
 export async function runTrialTips(): Promise<{ sent: number; skipped: number }> {
+  const now = Date.now();
   const trialRows = await db
     .select()
     .from(subscribers)
-    .where(eq(subscribers.status, "trial"));
+    .where(
+      and(
+        eq(subscribers.status, "trial"),
+        eq(subscribers.emailOptOut, false),
+        gt(subscribers.trialEndsAt, new Date(now))
+      )
+    );
+
   let sent = 0;
   let skipped = 0;
+  const mailReady = isMailTransportConfigured();
+
   for (const s of trialRows) {
     if (!s.trialEndsAt) continue;
     const started = s.trialEndsAt.getTime() - 7 * 86_400_000;
-    const day = Math.floor((Date.now() - started) / 86_400_000) + 1;
-    const tip = TIPS[day];
-    if (!tip) {
+    const day = Math.floor((now - started) / 86_400_000) + 1;
+
+    // Pick the latest eligible tip that has not been sent yet (resilient to skipped days).
+    const eligible = TIPS.filter((t) => day >= t.minDay);
+    if (!eligible.length) {
       skipped++;
       continue;
     }
-    // dedupe — never send the same tip twice
-    const seen = await db
-      .select({ n: sql<number>`count(*)::int` })
+
+    const prior = await db
+      .select({ subject: emailLog.subject })
       .from(emailLog)
-      .where(and(eq(emailLog.toEmail, s.email), eq(emailLog.subject, tip.subject)));
-    if ((seen[0]?.n ?? 0) > 0) {
+      .where(eq(emailLog.toEmail, s.email));
+    const alreadySent = new Set(prior.map((p) => p.subject));
+    const nextTip = eligible.find((t) => !alreadySent.has(t.subject));
+    if (!nextTip) {
       skipped++;
       continue;
     }
-    const key = process.env.RESEND_API_KEY;
-    if (key && process.env.ALERT_FROM_EMAIL) {
+
+    if (mailReady && !PUBLIC_CONFIG.postalAddress && !isOwnerAddress(s.email)) {
+      skipped++;
+      continue;
+    }
+
+    if (mailReady) {
       try {
-        const resend = new Resend(key);
-        await resend.emails.send({
-          from: process.env.ALERT_FROM_EMAIL,
+        const unsubscribe = unsubscribeUrls(s.email);
+        const ctaHref =
+          nextTip.minDay === 5
+            ? checkoutUpgradeUrl(s.email, s.plan === "pro" ? "pro" : "solo")
+            : nextTip.minDay === 3
+              ? prefsUrl(s.email)
+              : `${siteUrl()}/feed`;
+        const ctaLabel =
+          nextTip.minDay === 5
+            ? "LOCK IN PAID ACCESS →"
+            : nextTip.minDay === 3
+              ? "SET MY ZIP CODES & FILTERS →"
+              : "OPEN TODAY'S FILINGS →";
+
+        const res = await sendTransactionalMail({
+          from: alertFrom(),
           to: s.email,
-          subject: tip.subject,
+          replyTo: PUBLIC_CONFIG.contactEmail,
+          subject: nextTip.subject,
+          headers: {
+            "List-Unsubscribe": `<${unsubscribe.oneClick}>`,
+            "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+          },
           html: `<!doctype html><html><body style="margin:0;background:#0b0906;color:#f2ead9;font-family:Georgia,serif">
             <div style="max-width:620px;margin:auto;padding:36px 20px">
               <div style="font-size:11px;letter-spacing:0.25em;color:#e9a13b;text-transform:uppercase;font-family:monospace">${esc(BRAND.name)} · TRIAL WEEK</div>
-              <p style="color:#c9bfae;font-size:15px;line-height:1.8">${tip.body}</p>
-              <p style="margin:24px 0"><a href="${siteUrl()}/feed" style="background:#e9a13b;color:#1a0e12;padding:12px 24px;border-radius:999px;font-family:monospace;font-size:13px;font-weight:700;letter-spacing:0.08em;text-decoration:none">OPEN TODAY'S FILINGS →</a></p>
+              <p style="color:#c9bfae;font-size:15px;line-height:1.8">${esc(nextTip.body)}</p>
+              <p style="margin:24px 0"><a href="${ctaHref}" style="background:#e9a13b;color:#1a0e12;padding:12px 24px;border-radius:999px;font-family:monospace;font-size:12px;font-weight:700;letter-spacing:0.08em;text-decoration:none;display:inline-block">${ctaLabel}</a></p>
+              <p style="color:#8d8375;font-size:11px;line-height:1.7;font-family:monospace">
+                <a href="${unsubscribe.page}" style="color:#e9a13b">Stop alert emails</a>
+              </p>
               ${footerHtml()}
             </div>
           </body></html>`,
         });
+        if (res.status !== "sent") throw new Error(res.detail);
         await db.insert(emailLog).values({
           toEmail: s.email,
-          subject: tip.subject,
+          subject: nextTip.subject,
           status: "sent",
-          detail: `trial tip day ${day}`,
+          detail: `trial tip day ${nextTip.minDay}`,
         });
         sent++;
       } catch {
@@ -139,9 +174,9 @@ export async function runTrialTips(): Promise<{ sent: number; skipped: number }>
     } else {
       await db.insert(emailLog).values({
         toEmail: s.email,
-        subject: tip.subject,
+        subject: nextTip.subject,
         status: "dry_run",
-        detail: "RESEND_API_KEY / ALERT_FROM_EMAIL not set",
+        detail: "No mail transport configured",
       });
       skipped++;
     }
@@ -150,14 +185,14 @@ export async function runTrialTips(): Promise<{ sent: number; skipped: number }>
 }
 
 /* ------------------------------------------------------------------ */
-/* 2) WEEKLY DB BACKUP — the customer list IS the business             */
+/* 2) WEEKLY DB BACKUP                                                */
 /* ------------------------------------------------------------------ */
 function toCsv(rows: Record<string, unknown>[]): string {
   if (!rows.length) return "";
   const cols = Object.keys(rows[0]);
   const q = (v: unknown) => {
     const s = v === null || v === undefined ? "" : String(v);
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
   return [cols.join(","), ...rows.map((r) => cols.map((c) => q(r[c])).join(","))].join("\n");
 }
@@ -198,8 +233,8 @@ export async function runDbBackup(): Promise<{ sent: boolean; detail: string }> 
     html: `<!doctype html><html><body style="margin:0;background:#0b0906;color:#f2ead9;font-family:Georgia,serif">
       <div style="max-width:620px;margin:auto;padding:36px 20px">
         <div style="font-size:11px;letter-spacing:0.25em;color:#e9a13b;text-transform:uppercase;font-family:monospace">${esc(BRAND.name)} · WEEKLY BACKUP</div>
-        <h1 style="font-size:24px;margin:12px 0">Your customer list, safe.</h1>
-        <p style="color:#8d8375;font-size:14px;line-height:1.7">Attached: subscribers.csv (the real business asset) and messages.csv. Filing data itself is re-pulled from official registries daily, so it is not backed up — your customers and conversations are what matter.</p>
+        <h1 style="font-size:24px;margin:12px 0">Your customer list, backed up.</h1>
+        <p style="color:#8d8375;font-size:14px;line-height:1.7">Attached: subscribers.csv and messages.csv.</p>
         <p style="color:#8d8375;font-size:14px">Stats: <strong style="color:#f2ead9">${subs.length}</strong> subscribers (<strong style="color:#f2ead9">${subs.filter((s) => s.status === "active").length}</strong> active), <strong style="color:#f2ead9">${msgs.length}</strong> contact messages.</p>
         ${footerHtml()}
       </div>
@@ -212,9 +247,7 @@ export async function runDbBackup(): Promise<{ sent: boolean; detail: string }> 
 }
 
 /* ------------------------------------------------------------------ */
-/* 3) SOCIAL POST — auto-post via webhook (Zapier / Make / n8n),       */
-/*    Mon/Wed/Fri. A webhook URL in env = that platform posts itself;  */
-/*    the email is the confirmation + copy-paste fallback.             */
+/* 3) SOCIAL POST — auto-post via webhook (Zapier / Make / n8n)       */
 /* ------------------------------------------------------------------ */
 async function postViaWebhook(
   url: string,
@@ -238,20 +271,25 @@ export async function buildSocialPost(): Promise<{
   detail: string;
   posted: string[];
 }> {
-  // numbers from the last 7 days (aggregates only — no member data leaks)
   const week = await db
     .select({ state: events.state, n: sql<number>`count(*)::int` })
     .from(events)
-    .where(gt(events.detectedAt, new Date(Date.now() - 7 * 86_400_000)))
+    .where(
+      and(
+        gt(events.detectedAt, new Date(Date.now() - 7 * 86_400_000)),
+        or(isNull(events.licenseKey), notLike(events.licenseKey, "TTB-%"))
+      )
+    )
     .groupBy(events.state)
     .orderBy(desc(sql`count(*)`))
     .limit(5);
+
   const total = week.reduce((a, b) => a + b.n, 0);
   if (!week.length) {
     return { sent: false, detail: "no filings this week", posted: [] };
   }
 
-  // one showcase venue — only from UNLOCKED (older than embargo) filings
+  // One showcase venue — strictly from UNLOCKED (>9 days old) filings.
   const showcase = await db
     .select({ name: events.tradeName, city: events.city, state: events.state })
     .from(events)
@@ -259,41 +297,41 @@ export async function buildSocialPost(): Promise<{
       and(
         eq(events.eventType, "NEW_LICENSE"),
         sql`${events.occurredAt} < now() - interval '9 days'`,
-        sql`${events.tradeName} IS NOT NULL`
+        sql`${events.tradeName} IS NOT NULL`,
+        or(isNull(events.licenseKey), notLike(events.licenseKey, "TTB-%"))
       )
     )
     .orderBy(desc(events.occurredAt))
     .limit(1);
   const venue = showcase[0];
   const venueLine = venue
-    ? `Fresh example: "${venue.name}" just got its license issued in ${venue.city ?? ""} ${venue.state ?? ""} — our members read that filing the morning it posted.`
+    ? `Recent example: "${venue.name}" in ${venue.city ?? ""} ${venue.state ?? ""} — our members saw that filing the morning it posted.`
     : "";
 
   const link = siteUrl();
-  const statesLine = week.map((w) => `${w.state}: ${w.n}`).join(" · ");
+  const statesLine = week.map((w) => `${stateFullName(w.state)}: ${w.n}`).join(" · ");
 
   const linkedin = `NEW BARS AND RESTAURANTS FILE PAPERWORK MONTHS BEFORE THEY OPEN.
 
-This week our monitors caught ${total} new liquor-license filings across ${week.length} states (${statesLine}).
+This week our monitors caught ${total.toLocaleString()} new liquor-license filings across ${week.length} states (${statesLine}).
 
-Every one of those filings is a venue 60–90 days from pouring its first drink — still choosing its distributors, its insurance, its POS.
+Every one of those filings is a venue 60–90 days from pouring its first drink — still choosing its distributors, insurance, and POS.
 
 ${venueLine}
 
-We send them to your inbox every morning, the day they post. That's it. That's the product.
-👉 ${link}
+We email them to your inbox every morning, the day they post.
+${link}
 
-#hospitality #bars #restaurants #salestips #bebidas #TX #NY #CA`;
-  const xRaw = `${total} new bar & restaurant liquor filings landed this week across ${week.length} states — every one is a buyer 60–90 days from opening.
+#hospitality #bars #restaurants #beverageindustry #salestips`;
 
-We report them the morning they post. 🍸
+  const xRaw = `${total.toLocaleString()} new bar & restaurant liquor filings landed this week across ${week.length} states — every one is a buyer 60–90 days from opening.
+
+We deliver them the morning they post.
 
 ${link}`;
-  // X hard limit is 280 (any URL counts as 23) — trim defensively
   const x = xRaw.length > 279 ? xRaw.slice(0, 276).replace(/\s+\S*$/, "") + "…" : xRaw;
-  const pinterest = `New bar opening near you? Liquor filings happen 60–90 days before doors open — we list every new filing daily so reps and distributors get there first. ${total} filings this week. ${link} #baropening #restaurantbusiness #hospitalitysales #liquorindustry`;
+  const pinterest = `New bar opening near you? Liquor filings happen 60–90 days before doors open — we list every new filing daily so reps and distributors get there first. ${total.toLocaleString()} filings this week. ${link} #baropening #restaurantbusiness #hospitalitysales`;
 
-  // dedupe — one social batch per UTC day, even if the cron is re-run
   const todayStart = new Date();
   todayStart.setUTCHours(0, 0, 0, 0);
   const doneToday = await db
@@ -309,9 +347,6 @@ ${link}`;
     return { sent: false, detail: "already handled today (dedupe)", posted: [] };
   }
 
-  // auto-post — every platform with a webhook URL in env posts itself.
-  // Parallel with a 10s cap each, so the daily sweep stays well inside
-  // Hobby's 60s budget.
   const platforms = [
     { id: "x", label: "X", envName: "ZAPIER_X_WEBHOOK_URL", text: x },
     { id: "linkedin", label: "LinkedIn", envName: "ZAPIER_LINKEDIN_WEBHOOK_URL", text: linkedin },
@@ -320,6 +355,24 @@ ${link}`;
   const ops = (process.env.OPS_EMAIL ?? "").trim().toLowerCase();
   const outcomes = await Promise.all(
     platforms.map(async (p) => {
+      // Official LinkedIn REST API takes priority when configured (100% safe, zero Zapier cost)
+      if (p.id === "linkedin" && process.env.LINKEDIN_ACCESS_TOKEN?.trim()) {
+        const liRes = await publishLinkedInOfficial(p.text);
+        if (liRes.ok) {
+          await db
+            .insert(emailLog)
+            .values({
+              toEmail: ops || "owner",
+              subject: `✓ Posted to LinkedIn — ${total} filings this week`,
+              status: "sent",
+              detail: liRes.detail,
+            })
+            .catch(() => undefined);
+          return { p, status: "posted" as const };
+        }
+        return { p, status: "failed" as const, error: liRes.detail };
+      }
+
       const hook = (process.env[p.envName] ?? "").trim();
       if (!hook) return { p, status: "manual" as const };
       const r = await postViaWebhook(hook, {
@@ -328,7 +381,6 @@ ${link}`;
         image_url: `${link}/og.png`,
       });
       if (r.ok) {
-        // permanent record of what went out — also the dedupe trail
         await db
           .insert(emailLog)
           .values({
@@ -344,12 +396,16 @@ ${link}`;
     })
   );
   const posted = outcomes.filter((o) => o.status === "posted").map((o) => o.p.id);
+
+  // Also ping owner's free Telegram bot with the ready-to-share LinkedIn post!
+  await sendTelegramOwner(
+    `📣 ${BRAND.name} Social Post (${posted.includes("linkedin") ? "AUTO-POSTED TO LINKEDIN" : "COPY & SHARE"})\n\n${linkedin}`
+  ).catch(() => undefined);
   const autoLabels = outcomes
     .filter((o) => o.status === "posted")
     .map((o) => o.p.label)
     .join(" + ");
 
-  // email — confirmation when anything auto-posted, plain draft otherwise
   const parts: string[] = [];
   for (const o of outcomes) {
     const tag =
@@ -357,7 +413,7 @@ ${link}`;
         ? `<span style="color:#7fbf7f">✓ AUTO-POSTED</span>`
         : o.status === "failed"
           ? `<span style="color:#d98c6f">⚠ AUTO FAILED (${esc(o.error ?? "")}) — paste manually:</span>`
-          : `<span style="color:#8d8375">• webhook not set — paste manually (optional):</span>`;
+          : `<span style="color:#8d8375">• webhook not set — paste manually:</span>`;
     parts.push(`
       <p style="font-size:11px;letter-spacing:0.2em;color:#e9a13b;font-family:monospace;margin-top:24px">${esc(o.p.label.toUpperCase())} — ${tag}</p>
       <div style="background:#17100f;border:1px solid #2c1d20;border-radius:10px;padding:16px;font-size:13px;line-height:1.8;white-space:pre-wrap;color:#c9bfae">${esc(o.p.text)}</div>`);
@@ -370,8 +426,8 @@ ${link}`;
     html: `<!doctype html><html><body style="margin:0;background:#0b0906;color:#f2ead9;font-family:Georgia,serif">
       <div style="max-width:680px;margin:auto;padding:36px 20px">
         <div style="font-size:11px;letter-spacing:0.25em;color:#e9a13b;text-transform:uppercase;font-family:monospace">${esc(BRAND.name)} · SOCIAL POST</div>
-        <h1 style="font-size:24px;margin:12px 0">${posted.length ? `Machine ne khud post kar diya (${autoLabels}).` : `Aaj ka post ready hai.`}</h1>
-        <p style="color:#8d8375;font-size:13px;line-height:1.7">Numbers live DB se hain (${total} filings, ${week.length} states). Jo ✓ nahi hai usko 30 second me paste kar sakte ho.</p>
+        <h1 style="font-size:24px;margin:12px 0">${posted.length ? `Auto-posted to ${esc(autoLabels)}.` : `Today's social post is ready.`}</h1>
+        <p style="color:#8d8375;font-size:13px;line-height:1.7">Generated from live database totals (${total.toLocaleString()} filings across ${week.length} states).</p>
         ${parts.join("")}
         ${footerHtml()}
       </div>

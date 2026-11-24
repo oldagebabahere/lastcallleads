@@ -1,39 +1,42 @@
 // Public read API for Enterprise customers ($499/mo tier).
-//
-// Auth: `x-api-key` header, or `?key=` query param.
-// Keys live in ENTERPRISE_API_KEYS as a comma-separated list:
-//   ENTERPRISE_API_KEYS=key_live_abc,key_live_def
-//
-// Endpoints (all on this one route, selected by ?endpoint=):
-//   GET /api/v1?endpoint=filings&state=TX&since=2026-09-01&limit=100
-//   GET /api/v1?endpoint=filings&state=TX&city=Austin&type=full-bar&minScore=70
-//   GET /api/v1?endpoint=states
-//   GET /api/v1?endpoint=stats
+// Auth: `x-api-key` header (preferred) or `?key=` query param.
 import { db } from "@/db";
 import { ensureSchema } from "@/db/bootstrap";
 import { events, licenses } from "@/db/schema";
-import { and, desc, eq, gte, sql } from "drizzle-orm";
-import { INTENT_TAGS, scoreFiling } from "@/lib/lead-score";
+import { safeEqual } from "@/lib/auth";
+import { clientIp, rateLimit, tooManyRequests } from "@/lib/rate-limit";
+import { INTENT_TAGS, isJunkEntity, scoreFiling } from "@/lib/lead-score";
+import { and, desc, eq, gte, isNull, notLike, or, sql } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
 function authorized(req: Request): boolean {
   const raw = process.env.ENTERPRISE_API_KEYS;
-  if (!raw) return false; // closed until the operator adds keys
-  const allowed = raw.split(",").map((k) => k.trim()).filter(Boolean);
+  if (!raw) return false;
+  const allowed = raw
+    .split(",")
+    .map((k) => k.trim())
+    .filter(Boolean);
   const url = new URL(req.url);
-  const provided =
-    req.headers.get("x-api-key") ?? url.searchParams.get("key") ?? "";
-  return allowed.includes(provided.trim());
+  const provided = (
+    req.headers.get("x-api-key") ??
+    url.searchParams.get("key") ??
+    ""
+  ).trim();
+  if (!provided) return false;
+  return allowed.some((k) => safeEqual(k, provided));
 }
 
 export async function GET(req: Request) {
+  if (!rateLimit({ key: `v1:${clientIp(req)}`, max: 60, windowMs: 60_000 })) {
+    return tooManyRequests();
+  }
   if (!authorized(req)) {
     return Response.json(
       {
         ok: false,
         error: "invalid_api_key",
-        hint: "Send your key as the x-api-key header. Enterprise plan required.",
+        hint: "Send your key in the x-api-key header. Enterprise plan required.",
       },
       { status: 401 }
     );
@@ -43,7 +46,6 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const endpoint = (url.searchParams.get("endpoint") ?? "filings").toLowerCase();
 
-  // ---- coverage map ------------------------------------------------------
   if (endpoint === "states") {
     const rows = await db
       .select({
@@ -58,7 +60,6 @@ export async function GET(req: Request) {
     return Response.json({ ok: true, states: rows });
   }
 
-  // ---- headline numbers --------------------------------------------------
   if (endpoint === "stats") {
     const [totals, evts] = await Promise.all([
       db
@@ -67,7 +68,10 @@ export async function GET(req: Request) {
           states: sql<number>`count(DISTINCT ${licenses.state})::int`,
         })
         .from(licenses),
-      db.select({ filings: sql<number>`count(*)::int` }).from(events),
+      db
+        .select({ filings: sql<number>`count(*)::int` })
+        .from(events)
+        .where(or(isNull(events.licenseKey), notLike(events.licenseKey, "TTB-%"))),
     ]);
     return Response.json({
       ok: true,
@@ -79,21 +83,25 @@ export async function GET(req: Request) {
     });
   }
 
-  // ---- the money endpoint ------------------------------------------------
   const state = url.searchParams.get("state")?.toUpperCase() ?? null;
   const city = url.searchParams.get("city");
   const county = url.searchParams.get("county");
   const tag = url.searchParams.get("type");
   const sinceRaw = url.searchParams.get("since");
   const kind = url.searchParams.get("kind");
+  const includeFederal = url.searchParams.get("includeFederal") === "1";
   const minScore = Number(url.searchParams.get("minScore") ?? 0);
   const limit = Math.min(
-    1000,
-    Math.max(1, Number(url.searchParams.get("limit") ?? 100))
+    500,
+    Math.max(1, Number(url.searchParams.get("limit") ?? 100) || 100)
   );
+  const offset = Math.max(0, Number(url.searchParams.get("offset") ?? 0) || 0);
 
   const conds = [];
-  if (state) conds.push(eq(events.state, state));
+  if (!includeFederal) {
+    conds.push(or(isNull(events.licenseKey), notLike(events.licenseKey, "TTB-%")));
+  }
+  if (state && /^[A-Z]{2}$/.test(state)) conds.push(eq(events.state, state));
   if (city) conds.push(sql`lower(${events.city}) = ${city.toLowerCase()}`);
   if (county) conds.push(sql`lower(${events.county}) = ${county.toLowerCase()}`);
   if (kind === "pending") conds.push(eq(events.eventType, "NEW_PENDING"));
@@ -104,15 +112,20 @@ export async function GET(req: Request) {
   }
 
   const tagDef = tag ? INTENT_TAGS.find((t) => t.id === tag) : null;
+  if (tagDef?.id === "new-application") {
+    conds.push(eq(events.eventType, "NEW_PENDING"));
+  }
 
   const rows = await db
     .select()
     .from(events)
     .where(conds.length ? and(...conds) : undefined)
     .orderBy(desc(events.occurredAt))
-    .limit(limit * 3); // over-fetch, then score-filter
+    .limit(Math.min(1500, limit * 3))
+    .offset(offset);
 
   const results = rows
+    .filter((e) => !isJunkEntity(e.tradeName, e.ownerName, e.summary, e.typeName))
     .map((e) => ({
       id: e.id,
       state: e.state,
@@ -123,6 +136,7 @@ export async function GET(req: Request) {
             ? "LICENSE_ISSUED"
             : "STATUS_CHANGED",
       venue: e.tradeName ?? e.ownerName ?? null,
+      owner: e.ownerName ?? null,
       city: e.city,
       county: e.county,
       licenseType: e.typeName,
@@ -149,6 +163,7 @@ export async function GET(req: Request) {
   return Response.json({
     ok: true,
     count: results.length,
+    offset,
     filters: { state, city, county, type: tag, kind, since: sinceRaw, minScore },
     results,
   });

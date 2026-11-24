@@ -33,10 +33,16 @@ export default function WelcomePage() {
           </div>
           <div className="mt-9 flex flex-wrap justify-center gap-4">
             <Link
-              href="/feed"
+              href="/map"
               className="rounded-full bg-amber px-6 py-3 font-mono text-[11px] font-semibold tracking-[0.12em] text-ink transition-transform hover:scale-[1.03]"
             >
-              BROWSE THE FEED
+              OPEN TERRITORY MAP
+            </Link>
+            <Link
+              href="/feed"
+              className="rounded-full border border-amber/40 px-6 py-3 font-mono text-[11px] tracking-[0.12em] text-amber hover:bg-amber/10"
+            >
+              BROWSE LIVE FEED
             </Link>
             <Link
               href="/"

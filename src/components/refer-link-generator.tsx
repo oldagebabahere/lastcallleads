@@ -85,9 +85,9 @@ export default function ReferLinkGenerator() {
         </p>
         <a
           href={`mailto:?subject=${encodeURIComponent(
-            "New bar & liquor-license filings (TX/NY/CA…)"
+            "New bar & liquor-license filings (TX, NY, CA & more)"
           )}&body=${encodeURIComponent(
-            "Check this out — daily filings of new bars and liquor licenses, before the crowds: "
+            `Check this out — daily alerts for newly filed bars, restaurants, and liquor stores before they open: ${link || base}`
           )}`}
           className="mt-4 inline-block rounded-full border border-amber/50 px-5 py-2.5 font-mono text-[11px] font-semibold tracking-[0.12em] text-amber transition-colors hover:bg-amber hover:text-ink"
         >

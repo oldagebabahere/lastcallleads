@@ -24,8 +24,11 @@ export default function SubscriberActions({
     try {
       const res = await fetch("/api/admin/run", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ key: adminKey, action: "set_status", email, status: next }),
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-key": adminKey,
+        },
+        body: JSON.stringify({ action: "set_status", email, status: next }),
       });
       const data = await res.json();
       if (!data.ok) setError(data.error ?? "failed");

@@ -1,24 +1,32 @@
-import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
+import Link from "next/link";
+import { and, desc, eq, ilike, inArray, notLike, or } from "drizzle-orm";
 import { db } from "@/db";
 import { ensureSchema } from "@/db/bootstrap";
 import { events } from "@/db/schema";
 import Reveal from "@/components/reveal";
 import { Footer, LeadRow, Nav } from "@/components/ui";
 import { embargoCutoff, maskName } from "@/lib/queries";
+import { isJunkEntity } from "@/lib/lead-score";
+import {
+  LIVE_MARKETS,
+  LIVE_STATE_CODES,
+  LIVE_STATE_NAMES_LIST,
+  LIVE_STATE_SET,
+} from "@/lib/states";
 import type { Metadata } from "next";
 
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "Live liquor-license filing feed",
-  description:
-    "Freshly filed liquor-license applications and newly issued licenses across eleven states — straight from official state records.",
+  title: "Live liquor-license filing feed — 9 verified US markets",
+  description: `Freshly filed bar, restaurant & liquor-store license applications across ${LIVE_STATE_NAMES_LIST}.`,
+  alternates: { canonical: "/feed" },
 };
 
-// Retail-filing states get chips; every state works via the dropdown
-// (federal TTB permits flow into all 50).
-const FEED_STATES = ["ALL", "TX", "NY", "CA", "FL", "IL", "WA", "OR", "MO", "CO", "CT", "MD"];
-const ALL_US_STATES = "AL AK AZ AR CA CO CT DC DE FL GA HI IA ID IL IN KS KY LA MA MD ME MI MN MO MS MT NC ND NE NH NJ NM NV NY OH OK OR PA RI SC SD TN TX UT VA VT WA WI WV WY".split(" ");
+const FEED_STATE_OPTIONS = [
+  { code: "ALL", label: "All Markets" },
+  ...LIVE_MARKETS.map((m) => ({ code: m.code, label: m.name })),
+];
 
 export default async function FeedPage({
   searchParams,
@@ -26,11 +34,11 @@ export default async function FeedPage({
   searchParams: Promise<{ state?: string; q?: string; signal?: string }>;
 }) {
   const { state, q, signal } = await searchParams;
-  await ensureSchema();
+  const upper = state?.toUpperCase();
+  const cleanState = upper && LIVE_STATE_SET.has(upper) ? upper : undefined;
 
-  // builds filter links that preserve the other filters
   const qs = (over: Record<string, string>) => {
-    const merged = { state: state ?? "ALL", signal: signal ?? "ALL", q: q ?? "", ...over };
+    const merged = { state: cleanState ?? "ALL", signal: signal ?? "ALL", q: q ?? "", ...over };
     const p = new URLSearchParams();
     if (merged.state !== "ALL") p.set("state", merged.state);
     if (merged.signal !== "ALL") p.set("signal", merged.signal);
@@ -39,98 +47,98 @@ export default async function FeedPage({
     return `/feed${str ? `?${str}` : ""}`;
   };
 
-  const conds = [];
-  if (state && /^[A-Z]{2}$/.test(state)) {
-    conds.push(eq(events.state, state));
-  }
-  if (signal === "FILED") conds.push(eq(events.eventType, "NEW_PENDING"));
-  if (signal === "ISSUED") conds.push(eq(events.eventType, "NEW_LICENSE"));
-  if (q && q.trim()) {
-    const like = `%${q.trim()}%`;
-    conds.push(
-      or(
-        ilike(events.summary, like),
-        ilike(events.city, like),
-        ilike(events.tradeName, like),
-        ilike(events.ownerName, like),
-        ilike(events.county, like)
-      )
-    );
-  }
+  let rows: (typeof events.$inferSelect)[] = [];
+  try {
+    await ensureSchema();
+    const conds = [
+      notLike(events.licenseKey, "TTB-%"),
+      cleanState ? eq(events.state, cleanState) : inArray(events.state, LIVE_STATE_CODES),
+    ];
+    if (signal === "FILED") conds.push(eq(events.eventType, "NEW_PENDING"));
+    if (signal === "ISSUED") conds.push(eq(events.eventType, "NEW_LICENSE"));
+    if (signal === "STATUS") conds.push(eq(events.eventType, "STATUS_CHANGE"));
+    if (q && q.trim()) {
+      const like = `%${q.trim()}%`;
+      conds.push(
+        or(
+          ilike(events.summary, like),
+          ilike(events.city, like),
+          ilike(events.tradeName, like),
+          ilike(events.ownerName, like),
+          ilike(events.county, like)
+        )!
+      );
+    }
 
-  const rows = await db
-    .select()
-    .from(events)
-    .where(conds.length ? and(...conds) : undefined)
-    .orderBy(desc(events.occurredAt))
-    .limit(120);
+    const raw = await db
+      .select()
+      .from(events)
+      .where(and(...conds))
+      .orderBy(desc(events.occurredAt))
+      .limit(160);
+
+    rows = raw
+      .filter((e) => !isJunkEntity(e.tradeName, e.ownerName, e.typeName))
+      .slice(0, 120);
+  } catch {
+    rows = [];
+  }
 
   const cut = embargoCutoff();
 
   return (
     <main className="min-h-screen">
       <Nav />
-      <div className="mx-auto max-w-6xl px-5 pt-28 pb-20">
+      <div className="mx-auto max-w-6xl px-5 pb-20 pt-28">
         <Reveal>
-          <p className="eyebrow">[ Public feed · 7-day delay on names ]</p>
+          <p className="eyebrow">[ Live public feed · 9 verified markets · 7-day embargo ]</p>
           <h1 className="font-display mt-5 text-4xl font-medium sm:text-5xl">
             The filing <span className="italic text-amber">ticker.</span>
           </h1>
           <p className="mt-4 max-w-xl text-sm leading-relaxed text-smoke">
-            Every application and license below is tracked the moment it hits the registry.
-            <span className="text-cream">Confidential member intel</span> — names, addresses,
-            phones — posts <span className="text-cream">the same morning</span>. This public
-            preview reveals full details after 7 days.
+            Every bar, restaurant &amp; liquor-store filing below is tracked straight from official
+            state registries. <span className="text-cream">Subscribers</span> get the full beverage
+            dossier — name, street address, LLC entity, phone (where filed), and pitch script —{" "}
+            <span className="text-cream">the same morning</span>. Public preview unlocks after 7
+            days.
           </p>
         </Reveal>
 
         <form className="mt-8 flex flex-wrap items-center gap-3" method="get">
+          {cleanState && <input type="hidden" name="state" value={cleanState} />}
+          {signal && signal !== "ALL" && <input type="hidden" name="signal" value={signal} />}
           <div className="flex flex-wrap rounded-md border border-line">
-            {FEED_STATES.map((s) => (
-              <a
-                key={s}
-                href={qs({ state: s })}
-                className={`px-4 py-2 font-mono text-[11px] tracking-[0.15em] transition-colors ${
-                  (state ?? "ALL") === s
+            {FEED_STATE_OPTIONS.map((opt) => (
+              <Link
+                key={opt.code}
+                href={qs({ state: opt.code })}
+                className={`px-3 py-2 font-mono text-[11px] tracking-[0.08em] transition-colors ${
+                  (cleanState ?? "ALL") === opt.code
                     ? "bg-amber/15 text-amber"
                     : "text-smoke hover:text-cream"
                 }`}
               >
-                {s}
-              </a>
+                {opt.label}
+              </Link>
             ))}
           </div>
-          {/* every US state — federal TTB permits flow into all 50 */}
-          <select
-            name="state"
-            defaultValue={state && /^[A-Z]{2}$/.test(state) ? state : ""}
-            className="rounded-md border border-line bg-panel px-3 py-2 font-mono text-[11px] tracking-[0.15em] text-smoke focus:border-amber/60 focus:outline-none"
-            aria-label="Any US state"
+          <Link
+            href="/#pricing"
+            className="rounded-md border border-amber/40 bg-amber/10 px-4 py-2 font-mono text-[11px] tracking-[0.15em] text-amber transition-colors hover:bg-amber hover:text-[#140b0e]"
           >
-            <option value="">ANY STATE (50)</option>
-            {ALL_US_STATES.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
-          {/* save this search → daily email alerts (city + keywords) */}
-          <a
-            href={`/prefs${(state || q) ? `?${new URLSearchParams({ ...(state ? { city: "" } : {}), ...(q ? { q } : {}) }).toString()}` : ""}`}
-            className="rounded-md border border-amber/40 bg-amber/10 px-4 py-2 font-mono text-[11px] tracking-[0.15em] text-amber transition-colors hover:bg-amber hover:text-ink"
-          >
-            SAVE THIS SEARCH ⚑
-          </a>
+            START 7-DAY FREE TRIAL →
+          </Link>
           <div className="flex flex-wrap rounded-md border border-line">
             {[
               ["ALL", "ALL SIGNALS"],
               ["FILED", "FILED"],
               ["ISSUED", "ISSUED"],
+              ["STATUS", "STATUS"],
             ].map(([val, label]) => (
-              <a
+              <Link
                 key={val}
                 href={qs({ signal: val })}
-                className={`px-4 py-2 font-mono text-[11px] tracking-[0.15em] transition-colors ${
+                className={`px-3.5 py-2 font-mono text-[11px] tracking-[0.15em] transition-colors ${
                   (signal ?? "ALL") === val || (val === "ALL" && !signal)
                     ? val === "FILED"
                       ? "bg-amber/15 text-amber"
@@ -141,30 +149,35 @@ export default async function FeedPage({
                 }`}
               >
                 {label}
-              </a>
+              </Link>
             ))}
           </div>
           <input
             name="q"
             defaultValue={q ?? ""}
-            placeholder="Search city, name, county…"
+            placeholder="Search city, venue, county…"
             className="min-w-0 flex-1 rounded-md border border-line bg-panel px-3.5 py-2 text-sm text-cream placeholder:text-faint focus:border-amber/60 focus:outline-none sm:max-w-xs"
           />
           <button
             type="submit"
-            className="rounded-md bg-amber px-4 py-2 font-mono text-[11px] font-semibold tracking-[0.12em] text-ink"
+            className="rounded-md bg-amber px-4 py-2 font-mono text-[11px] font-semibold tracking-[0.12em] text-[#140b0e]"
           >
             SEARCH
           </button>
-          <a href="/feed" className="font-mono text-[11px] tracking-[0.12em] text-smoke hover:text-cream">
+          <Link
+            href="/feed"
+            className="font-mono text-[11px] tracking-[0.12em] text-smoke hover:text-cream"
+          >
             RESET
-          </a>
+          </Link>
         </form>
 
         <div className="mt-8 overflow-hidden rounded-xl border border-line">
           <div className="grid grid-cols-[86px_1fr_auto] items-center gap-3 border-b border-line bg-panel px-4 py-2.5 sm:grid-cols-[96px_80px_1fr_52px_auto] sm:gap-4">
             <span className="font-mono text-[9px] tracking-[0.25em] text-faint">DATE</span>
-            <span className="hidden font-mono text-[9px] tracking-[0.25em] text-faint sm:block">SIGNAL</span>
+            <span className="hidden font-mono text-[9px] tracking-[0.25em] text-faint sm:block">
+              SIGNAL
+            </span>
             <span className="font-mono text-[9px] tracking-[0.25em] text-faint">FILING</span>
             <span className="hidden text-center font-mono text-[9px] tracking-[0.15em] text-faint sm:block">
               SCORE
@@ -174,15 +187,19 @@ export default async function FeedPage({
           {rows.length === 0 && (
             <div className="px-6 py-16 text-center">
               <p className="font-mono text-xs leading-relaxed text-smoke">
-                No filings found yet. The machine pulls fresh records on its daily sweep —
-                or the owner can run one from the control room.
+                No filings match those filters yet. Try clearing a filter, or check back after the
+                next morning sweep.
               </p>
             </div>
           )}
           {rows.map((e) => {
             const locked = e.occurredAt ? e.occurredAt.getTime() > cut.getTime() : false;
             const row = locked
-              ? { ...e, tradeName: maskName(e.tradeName ?? e.ownerName ?? "Applicant"), ownerName: null }
+              ? {
+                  ...e,
+                  tradeName: maskName(e.tradeName ?? e.ownerName ?? "Applicant"),
+                  ownerName: null,
+                }
               : e;
             return <LeadRow key={e.id} e={row} locked={locked} />;
           })}

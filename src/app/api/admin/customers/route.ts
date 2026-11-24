@@ -8,7 +8,7 @@
 import { db } from "@/db";
 import { ensureSchema } from "@/db/bootstrap";
 import { emailLog, subscribers } from "@/db/schema";
-import { isAdminKey } from "@/lib/auth";
+import { extractAdminKey, isAdminKey } from "@/lib/auth";
 import { sendWelcome } from "@/lib/email";
 import { BRAND } from "@/lib/brand";
 import { desc, eq } from "drizzle-orm";
@@ -17,9 +17,7 @@ import { Resend } from "resend";
 export const dynamic = "force-dynamic";
 
 function authorized(req: Request): boolean {
-  const url = new URL(req.url);
-  const key = req.headers.get("x-admin-key") ?? url.searchParams.get("key");
-  return isAdminKey(key);
+  return isAdminKey(extractAdminKey(req));
 }
 
 export async function GET(req: Request) {

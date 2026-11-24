@@ -15,12 +15,12 @@ export const licenses = pgTable(
   "licenses",
   {
     id: serial("id").primaryKey(),
-    state: text("state").notNull(), // TX | NY | CA
+    state: text("state").notNull(), // 2-letter US state code
     licenseKey: text("license_key").notNull(), // unique id at the source
     kind: text("kind").notNull(), // pending | active
     status: text("status"),
     licenseType: text("license_type"), // raw code e.g. "MB"
-    typeName: text("type_name"), // human label e.g. "Mixed Beverage"
+    typeName: text("type_name"), // human label e.g. "Mixed Beverage Permit (Full Bar)"
     tradeName: text("trade_name"), // public business name
     ownerName: text("owner_name"), // legal entity / person
     phone: text("phone"),
@@ -41,6 +41,8 @@ export const licenses = pgTable(
     uniqueIndex("licenses_state_key").on(t.state, t.licenseKey),
     index("licenses_state_idx").on(t.state),
     index("licenses_filed_idx").on(t.filedAt),
+    index("licenses_state_city_idx").on(t.state, t.city),
+    index("licenses_state_kind_idx").on(t.state, t.kind),
   ]
 );
 
@@ -63,8 +65,11 @@ export const events = pgTable(
     payload: text("payload"), // JSON string, debug only
   },
   (t) => [
+    uniqueIndex("events_key_type_uidx").on(t.licenseKey, t.eventType),
     index("events_detected_idx").on(t.detectedAt),
     index("events_state_idx").on(t.state),
+    index("events_occurred_idx").on(t.occurredAt),
+    index("events_state_occurred_idx").on(t.state, t.occurredAt),
   ]
 );
 
@@ -73,7 +78,7 @@ export const ingestRuns = pgTable(
   "ingest_runs",
   {
     id: serial("id").primaryKey(),
-    source: text("source").notNull(), // tx-pending | tx-active | ny-pending | ny-active | ca
+    source: text("source").notNull(),
     ok: boolean("ok").default(true).notNull(),
     rowsSeen: integer("rows_seen").default(0).notNull(),
     newLicenses: integer("new_licenses").default(0).notNull(),
@@ -87,7 +92,7 @@ export const ingestRuns = pgTable(
 
 export const sourceHealth = pgTable("source_health", {
   id: serial("id").primaryKey(),
-  source: text("source").notNull().unique(), // spec label, e.g. "US · TTB alcohol wholesalers"
+  source: text("source").notNull().unique(), // spec label, e.g. "Texas · pending"
   state: text("state").notNull().default("US"),
   status: text("status").notNull().default("live"), // live | paused
   pausedReason: text("paused_reason"),
@@ -98,9 +103,8 @@ export const sourceHealth = pgTable("source_health", {
   lastRunAt: timestamp("last_run_at"),
   lastProbeAt: timestamp("last_probe_at"),
   alertState: text("alert_state").notNull().default("none"), // none | paused | recovered
-  // Auto-heal: when a dataset dies, PourWatch searches the Socrata catalog
-  // for a replacement; the adopted dataset id is stored here and wins over
-  // the hardcoded one.
+  // Auto-heal: when a Socrata dataset dies, PourWatch searches the catalog
+  // for a replacement; the adopted dataset id is stored here.
   overrideDataset: text("override_dataset"),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -111,6 +115,7 @@ export const venueReceipts = pgTable(
     id: serial("id").primaryKey(),
     permit: text("permit").notNull(), // TABC permit / taxpayer+location
     tradeName: text("trade_name"),
+    ownerName: text("owner_name"), // taxpayer / hospitality group LLC for multi-unit matching
     city: text("city"),
     county: text("county"),
     state: text("state").notNull().default("TX"),
@@ -128,42 +133,50 @@ export const subscribers = pgTable("subscribers", {
   id: serial("id").primaryKey(),
   email: text("email").notNull().unique(),
   name: text("name"),
-  plan: text("plan").default("pro").notNull(),
-  status: text("status").default("waitlist").notNull(), // waitlist | active | canceled
-  states: text("states").default("TX,NY").notNull(), // comma joined: "TX,NY,CA"
+  plan: text("plan").default("solo").notNull(), // solo | pro | enterprise
+  status: text("status").default("trial").notNull(), // trial | active | waitlist | canceled
+  states: text("states").default("TX").notNull(), // comma joined: "TX,NY,CA"
   emailOptOut: boolean("email_opt_out").default(false).notNull(),
   refBy: text("ref_by"), // email of the subscriber who referred this person
-  referralCredits: integer("referral_credits").default(0).notNull(), // banked free months from successful referrals
-  zipFilter: text("zip_filter"), // comma-joined ZIP codes, e.g. "77019,77002"
-  typeFilter: text("type_filter"), // comma-joined intent tags: "full-bar,package-store"
-  cityFilter: text("city_filter"), // saved search: city name (case-insensitive)
+  referralRewarded: boolean("referral_rewarded").default(false).notNull(),
+  referralCredits: integer("referral_credits").default(0).notNull(),
+  zipFilter: text("zip_filter"), // comma-joined 5-digit ZIP codes
+  typeFilter: text("type_filter"), // comma-joined intent tags
+  cityFilter: text("city_filter"), // saved search: city name
   keywordFilter: text("keyword_filter"), // saved search: free-text keywords
-  prefsToken: text("prefs_token"), // magic link token for /prefs?token=...
+  webhookUrl: text("webhook_url"), // optional Slack / Discord / Zapier webhook URL
+  prefsToken: text("prefs_token"),
   digestLimit: integer("digest_limit").default(40).notNull(),
-  // 7-day free trial: digests flow from day one without a card; the day it
-  // ends we send one "trial over" email and stop.
   trialEndsAt: timestamp("trial_ends_at"),
   trialNotified: boolean("trial_notified").default(false).notNull(),
-  stripeCustomerId: text("stripe_customer_id"), // payment-provider customer id (any gateway)
+  welcomeSentAt: timestamp("welcome_sent_at"),
+  stripeCustomerId: text("stripe_customer_id"), // payment-provider customer id
   stripeSubscriptionId: text("stripe_subscription_id"),
   lastDigestAt: timestamp("last_digest_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
-export const prospects = pgTable("prospects", {
-  id: serial("id").primaryKey(),
-  category: text("category").notNull(), // attorney | insurance | beverage | bar
-  osmKey: text("osm_key").notNull(), // "node/12345" from OpenStreetMap
-  name: text("name").notNull(),
-  phone: text("phone"),
-  website: text("website"),
-  address: text("address"),
-  city: text("city"),
-  state: text("state").notNull(),
-  lat: doublePrecision("lat"),
-  lng: doublePrecision("lng"),
-  firstSeenAt: timestamp("first_seen_at").defaultNow().notNull(),
-});
+export const prospects = pgTable(
+  "prospects",
+  {
+    id: serial("id").primaryKey(),
+    category: text("category").notNull(), // attorney | insurance | beverage | distributor | bar
+    osmKey: text("osm_key").notNull(), // "node/12345" or "ttb/..."
+    name: text("name").notNull(),
+    phone: text("phone"),
+    website: text("website"),
+    address: text("address"),
+    city: text("city"),
+    state: text("state").notNull(),
+    lat: doublePrecision("lat"),
+    lng: doublePrecision("lng"),
+    firstSeenAt: timestamp("first_seen_at").defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("prospects_cat_osm").on(t.category, t.osmKey),
+    index("prospects_state_idx").on(t.state),
+  ]
+);
 
 export const contactMessages = pgTable(
   "contact_messages",
@@ -186,12 +199,46 @@ export const emailLog = pgTable(
     id: serial("id").primaryKey(),
     toEmail: text("to_email").notNull(),
     subject: text("subject").notNull(),
-    status: text("status").notNull(), // sent | dry_run | error
+    status: text("status").notNull(), // sent | dry_run | error | logged
     detail: text("detail"),
     eventCount: integer("event_count").default(0).notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (t) => [index("email_log_created_idx").on(t.createdAt)]
+);
+
+// Strictly enforces at-most-once processing for payment webhooks (Standard Webhooks).
+export const webhookEvents = pgTable(
+  "webhook_events",
+  {
+    id: serial("id").primaryKey(),
+    provider: text("provider").notNull(), // dodopayments
+    eventId: text("event_id").notNull().unique(),
+    eventType: text("event_type").notNull(),
+    processedAt: timestamp("processed_at").defaultNow().notNull(),
+  },
+  (t) => [index("webhook_events_processed_idx").on(t.processedAt)]
+);
+
+// Permanent dedupe ledger for autonomous B2B cold outreach (never double-emails a company,
+// and tracks warm Day-3 follow-ups from the exact same sender account).
+export const outreachSent = pgTable(
+  "outreach_sent",
+  {
+    id: serial("id").primaryKey(),
+    email: text("email").notNull().unique(),
+    company: text("company").notNull(),
+    state: text("state").notNull(),
+    category: text("category").notNull(),
+    status: text("status").notNull().default("sent"), // sent | dry_run | error
+    senderAccount: text("sender_account"),
+    lastSubject: text("last_subject"),
+    barsJson: text("bars_json"),
+    followupCount: integer("followup_count").notNull().default(0),
+    followupSentAt: timestamp("followup_sent_at"),
+    sentAt: timestamp("sent_at").defaultNow().notNull(),
+  },
+  (t) => [index("outreach_sent_state_idx").on(t.state, t.sentAt)]
 );
 
 export type License = typeof licenses.$inferSelect;

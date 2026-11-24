@@ -1,13 +1,14 @@
-// Signup endpoint. Two modes:
-//   1. Dodo Payments configured → create a hosted checkout and redirect there
-//   2. Not configured yet       → park the email on the waitlist (still captured)
-//
-// Every signup is stored in the database first, so a customer is never lost
-// even if a payment provider throws an error mid-flight.
+// Signup endpoint — honors the "7-day free trial · no card" promise honestly.
+//   • Default mode: starts a 7-day free trial (1 trial per email), sends instant
+//     trial welcome email with /prefs + 1-click upgrade checkout link.
+//   • Explicit `immediateCheckout: true`: creates a Dodo hosted checkout session
+//     when Dodo is configured (for users choosing "Skip trial & subscribe now").
+//   • Active paying subscribers can NEVER be overwritten by unauthenticated POSTs.
 import { db } from "@/db";
 import { ensureSchema } from "@/db/bootstrap";
 import { siteUrl } from "@/lib/site";
 import { createDodoCheckout, dodoConfigured } from "@/lib/dodo";
+import { sendTrialStarted } from "@/lib/email";
 import { eq } from "drizzle-orm";
 import { subscribers } from "@/db/schema";
 import { clientIp, rateLimit, tooManyRequests } from "@/lib/rate-limit";
@@ -15,24 +16,23 @@ import { clientIp, rateLimit, tooManyRequests } from "@/lib/rate-limit";
 export const dynamic = "force-dynamic";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-// All 50 states + DC: state-level retail filings where portals exist, and
-// federal TTB permits (new wholesalers/producers/wineries) everywhere else.
-const VALID_STATES = new Set(
-  "AL AK AZ AR CA CO CT DC DE FL GA HI IA ID IL IN KS KY LA MA MD ME MI MN MO MS MT NC ND NE NH NJ NM NV NY OH OK OR PA RI SC SD TN TX UT VA VT WA WI WV WY".split(" ")
-);
+import { LIVE_STATE_SET } from "@/lib/states";
+
+const VALID_STATES = LIVE_STATE_SET;
 const KNOWN_PLANS = new Set(["solo", "pro"]);
 
 export async function POST(req: Request) {
-  // public endpoint — cap sign-up spam from a single IP
-  if (!rateLimit({ key: `sub:${clientIp(req)}`, max: 5, windowMs: 60_000 })) {
+  if (!rateLimit({ key: `sub:${clientIp(req)}`, max: 6, windowMs: 60_000 })) {
     return tooManyRequests();
   }
+
   let body: {
     email?: string;
     name?: string;
     states?: string[];
     plan?: string;
     ref?: string;
+    immediateCheckout?: boolean;
   };
   try {
     body = await req.json();
@@ -40,12 +40,12 @@ export async function POST(req: Request) {
     return Response.json({ ok: false, error: "bad_json" }, { status: 400 });
   }
 
-  const email = (body.email ?? "").trim().toLowerCase();
+  const email = (body.email ?? "").trim().toLowerCase().slice(0, 254);
   if (!EMAIL_RE.test(email)) {
     return Response.json({ ok: false, error: "invalid_email" }, { status: 422 });
   }
 
-  const plan = KNOWN_PLANS.has(body.plan ?? "") ? body.plan! : "pro";
+  const plan = KNOWN_PLANS.has(body.plan ?? "") ? (body.plan as "solo" | "pro") : "solo";
   const states = (body.states ?? [])
     .map((s) => String(s).trim().toUpperCase())
     .filter((s) => VALID_STATES.has(s));
@@ -55,12 +55,12 @@ export async function POST(req: Request) {
       { status: 422 }
     );
   }
-  // Solo covers ONE state (as priced); All-Access up to 12.
-  const stateList = plan === "solo" ? states.slice(0, 1) : states.slice(0, 3);
+  const uniqueStates = Array.from(new Set(states));
+  const stateList = plan === "solo" ? uniqueStates.slice(0, 1) : uniqueStates.slice(0, 3);
 
-  // Referral attribution — "refer one paying rep, get a month free".
   const rawRef = (body.ref ?? "").trim().toLowerCase();
   const refBy = EMAIL_RE.test(rawRef) && rawRef !== email ? rawRef : null;
+  const wantCheckout = Boolean(body.immediateCheckout);
 
   await ensureSchema();
 
@@ -70,37 +70,64 @@ export async function POST(req: Request) {
     .where(eq(subscribers.email, email))
     .limit(1);
 
+  const cur = existing[0];
+
+  // SECURITY: Never let an unauthenticated POST overwrite an active subscriber!
+  if (cur && cur.status === "active") {
+    return Response.json({
+      ok: true,
+      mode: "already_active",
+      message:
+        "This email already has an active subscription. Use the preferences link at the bottom of your morning digest to change territories.",
+    });
+  }
+
+  // If they already used their 7-day trial in the past, route them to checkout (or explain cleanly).
+  const alreadyTrialed = Boolean(cur && cur.trialEndsAt);
+
+  if (cur && cur.status === "trial" && cur.trialEndsAt && cur.trialEndsAt.getTime() > Date.now() && !wantCheckout) {
+    return Response.json({
+      ok: true,
+      mode: "trial",
+      message:
+        "Your 7-day free trial is already active — check your inbox for your preferences link and tomorrow morning's digest.",
+    });
+  }
+
   let subscriberId: number;
-  if (existing.length) {
+  if (!cur) {
+    const inserted = await db
+      .insert(subscribers)
+      .values({
+        email,
+        name: body.name?.trim().slice(0, 80) || null,
+        plan,
+        states: stateList.join(","),
+        status: wantCheckout && dodoConfigured() ? "waitlist" : "trial",
+        trialEndsAt:
+          wantCheckout && dodoConfigured()
+            ? null
+            : new Date(Date.now() + 7 * 86_400_000),
+        ...(refBy ? { refBy } : {}),
+      })
+      .returning({ id: subscribers.id });
+    subscriberId = inserted[0].id;
+  } else {
+    subscriberId = cur.id;
+    // Only update pending/waitlist/expired records when initiating checkout
     await db
       .update(subscribers)
       .set({
         states: stateList.join(","),
         plan,
-        name: body.name ?? existing[0].name,
-        ...(refBy && !existing[0].refBy ? { refBy } : {}),
+        emailOptOut: false,
+        ...(refBy && !cur.refBy ? { refBy } : {}),
       })
-      .where(eq(subscribers.email, email));
-    subscriberId = existing[0].id;
-  } else {
-    const inserted = await db
-      .insert(subscribers)
-      .values({
-        email,
-        name: body.name ?? null,
-        plan,
-        states: stateList.join(","),
-        // Real trial: digests flow immediately, no card needed, for 7 days.
-        status: "trial",
-        trialEndsAt: new Date(Date.now() + 7 * 86_400_000),
-        ...(refBy ? { refBy } : {}),
-      })
-      .returning({ id: subscribers.id });
-    subscriberId = inserted[0].id;
+      .where(eq(subscribers.id, cur.id));
   }
 
-  // Send them to Dodo's hosted checkout when it is configured.
-  if (dodoConfigured()) {
+  // Direct checkout when explicitly requested OR when a previous trial already ended.
+  if ((wantCheckout || alreadyTrialed) && dodoConfigured()) {
     try {
       const checkoutUrl = await createDodoCheckout({
         email,
@@ -110,14 +137,37 @@ export async function POST(req: Request) {
       });
       return Response.json({ ok: true, mode: "checkout", checkoutUrl });
     } catch {
-      // Dodo hiccup — the signup is already saved, so fall through to waitlist.
+      if (alreadyTrialed) {
+        return Response.json({
+          ok: false,
+          error: "checkout_unavailable",
+          message:
+            "Your 7-day trial has already been used and checkout is temporarily unavailable. Contact support to activate.",
+        }, { status: 503 });
+      }
     }
   }
+
+  if (alreadyTrialed) {
+    return Response.json({
+      ok: true,
+      mode: "waitlist",
+      message:
+        "Your 7-day trial for this email has already ended. Contact support or use the upgrade link in your digest to activate a paid plan.",
+    });
+  }
+
+  // Send immediate trial confirmation with preferences & upgrade links.
+  await sendTrialStarted({
+    email,
+    states: stateList.join(", "),
+    plan,
+  }).catch(() => undefined);
 
   return Response.json({
     ok: true,
     mode: "trial",
     message:
-      "Trial live: your first morning digest arrives tomorrow (7 days free, no card).",
+      `7-day free trial live for ${stateList.join(", ")} (no card required). Check your inbox for your preferences link — your first morning digest arrives after the next sweep.`,
   });
 }

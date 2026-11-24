@@ -1,38 +1,55 @@
-// Universal aggregator: a single module that batches MANY state sources
-// into the same database + email pipeline. Each state contributes its own
-// "source" entry; the existing digest/email code already filters by state
-// automatically. To add a new state:
-//
-//   1. Add an entry to STATES below (state code, label, source URL or a
-//      Socrata dataset id).
-//   2. The cron job runs daily; the relevant fetcher runs automatically and
-//      flows the same path as TX + NY.
-//
-// No further code changes — period. New rows in the database trigger new
-// city pages, new entries in the digest, fresh sitemap updates.
-
+// Universal aggregator: pulls every configured state & federal liquor-license
+// source into the normalized `licenses` + `events` tables, tracks status flips,
+// guards against first-run event floods and ID-format mutations, and reports
+// health to PourWatch.
 import { db } from "@/db";
 import { ensureSchema } from "@/db/bootstrap";
-import { events, licenses } from "@/db/schema";
+import { events, ingestRuns, licenses } from "@/db/schema";
 import type { NormalizedRecord } from "./sources";
-import { clean, cleanNumberId, cleanZip, normalizeCity, safeDate } from "./sources";
+import {
+  clean,
+  cleanCounty,
+  cleanNumberId,
+  cleanZip,
+  fetchSocrata,
+  fetchWithRetry,
+  normalizeCity,
+  safeCoord,
+  safeDate,
+} from "./sources";
 import { txTypeName } from "./ingest-tx";
+import { extractGeoPoint } from "./ingest-ny";
 import { and, eq, inArray } from "drizzle-orm";
-import { getHealthMap, getOverrideDataset, priorMedianRows, recordRunResult } from "@/lib/pourwatch";
+import {
+  autoHealSource,
+  getHealthMap,
+  getOverrideDataset,
+  priorMedianRows,
+  recordRunResult,
+  reprobeDue,
+} from "@/lib/pourwatch";
 import zlib from "zlib";
 
 export type StateSpec = {
   state: string;
   label: string;
-  socrata?: { host: string; dataset: string; where?: string; limit?: number };
+  /** fast = runs cleanly inside Vercel Hobby 60s; heavy = bulk CSV/zip/register (runs in GitHub Actions or scheduled heavy window) */
+  priority?: "fast" | "heavy";
+  /** Rolling weekday-only feeds (e.g. WA Local Authority Letters) can legitimately return 0 rows on quiet days */
+  allowEmpty?: boolean;
+  /** Bulk dateless registers seed `licenses` on first pull without flooding `events` */
+  isStaticRegister?: boolean;
+  socrata?: {
+    host: string;
+    dataset: string;
+    where?: string;
+    order?: string;
+    limit?: number;
+  };
   fetchUrl?: string;
-  // dynamic URL (TTB moves files into monthly folders — resolved at runtime)
   fetchUrlFn?: () => Promise<string>;
-  // absolute floor for static registers: below this = layout changed = failure
   minRows?: number;
-  // catalog search terms PourWatch uses to find a replacement dataset
   healKeywords?: string;
-  // mapping between raw source columns and our normalized fields
   map: (rec: Record<string, unknown>) => NormalizedRecord | null;
 };
 
@@ -40,26 +57,35 @@ export type StateSpec = {
 const TX_PENDING_SPEC: StateSpec = {
   state: "TX",
   label: "Texas · pending",
-  socrata: { host: "data.texas.gov", dataset: "mxm5-tdpj", limit: 5000 },
+  priority: "fast",
+  socrata: {
+    host: "data.texas.gov",
+    dataset: "mxm5-tdpj",
+    order: "submission_date DESC",
+    limit: 5000,
+  },
+  healKeywords: "TABC pending application",
   map: (rec) => {
-    const appId = cleanNumberId(rec.applicationid);
+    const appId = cleanNumberId(rec.application_id ?? rec.applicationid);
     if (!appId) return null;
     const code = clean(rec.license_type);
+    const owner = clean(rec.owner);
+    const trade = clean(rec.trade_name);
     return {
       state: "TX",
       key: `TX-P-${appId}`,
       kind: "pending",
-      status: clean(rec.applicationstatus) ?? "Pending",
+      status: clean(rec.applicationstatus ?? rec.application_status) ?? "Pending",
       licenseType: code,
       typeName: txTypeName(code),
-      tradeName: null,
-      ownerName: clean(rec.owner),
+      tradeName: trade ?? owner,
+      ownerName: owner,
       phone: null,
       address: clean(rec.address),
       city: normalizeCity(rec.city),
       zip: cleanZip(rec.zip),
-      county: clean(rec.county),
-      filedAt: safeDate(rec.submission_date),
+      county: cleanCounty(rec.county),
+      filedAt: safeDate(rec.submission_date ?? rec.application_submission_date),
       issuedAt: null,
       expiresAt: null,
       lat: null,
@@ -69,15 +95,61 @@ const TX_PENDING_SPEC: StateSpec = {
   },
 };
 
+const TX_RELOCATION_SPEC: StateSpec = {
+  state: "TX",
+  label: "Texas · change of location",
+  priority: "fast",
+  allowEmpty: true,
+  socrata: {
+    host: "data.texas.gov",
+    dataset: "wrzc-mwf2",
+    order: "application_submission_date DESC",
+    limit: 2000,
+  },
+  healKeywords: "TABC change of location",
+  map: (rec) => {
+    const appId = cleanNumberId(rec.application_id);
+    if (!appId) return null;
+    const code = clean(rec.license_type);
+    const owner = clean(rec.owner);
+    const trade = clean(rec.trade_name);
+    return {
+      state: "TX",
+      key: `TX-R-${appId}`,
+      kind: "pending",
+      status: clean(rec.application_status) ?? "Relocation Pending",
+      licenseType: code,
+      typeName: txTypeName(code),
+      tradeName: trade ?? owner,
+      ownerName: owner,
+      phone: null,
+      address: clean(rec.proposed_loc_line_1) ?? clean(rec.address),
+      mailAddress: clean(rec.address),
+      city: normalizeCity(rec.proposed_city ?? rec.city),
+      zip: cleanZip(rec.proposed_zip ?? rec.zip),
+      county: cleanCounty(rec.proposed_county ?? rec.county),
+      filedAt: safeDate(rec.application_submission_date),
+      issuedAt: null,
+      expiresAt: null,
+      lat: null,
+      lng: null,
+      sourceUrl: "https://data.texas.gov/d/wrzc-mwf2",
+    };
+  },
+};
+
 const TX_ACTIVE_SPEC: StateSpec = {
   state: "TX",
   label: "Texas · active",
+  priority: "fast",
   socrata: {
     host: "data.texas.gov",
     dataset: "7hf9-qc9f",
     where: "primary_status='Active'",
-    limit: 6000,
+    order: "status_change_date DESC",
+    limit: 5000,
   },
+  healKeywords: "TABC license information",
   map: (rec) => {
     const licenseId = cleanNumberId(rec.license_id);
     if (!licenseId) return null;
@@ -89,16 +161,17 @@ const TX_ACTIVE_SPEC: StateSpec = {
       status: clean(rec.primary_status) ?? "Active",
       licenseType: code,
       typeName: txTypeName(code),
-      tradeName: clean(rec.trade_name),
+      tradeName: clean(rec.trade_name) ?? clean(rec.owner),
       ownerName: clean(rec.owner),
       phone: clean(rec.phone),
       address: clean(rec.address),
+      mailAddress: clean(rec.mail_address),
       city: normalizeCity(rec.city),
       zip: cleanZip(rec.zip),
-      county: clean(rec.county),
+      county: cleanCounty(rec.county),
       filedAt: safeDate(rec.original_issue_date),
       issuedAt: safeDate(rec.current_issued_date) ?? safeDate(rec.status_change_date),
-      expiresAt: safeDate(rec.expiration_date),
+      expiresAt: safeDate(rec.expiration_date, { allowFutureYears: 10 }),
       lat: null,
       lng: null,
       sourceUrl: "https://data.texas.gov/d/7hf9-qc9f",
@@ -110,11 +183,19 @@ const TX_ACTIVE_SPEC: StateSpec = {
 const NY_PENDING_SPEC: StateSpec = {
   state: "NY",
   label: "New York · pending",
-  socrata: { host: "data.ny.gov", dataset: "f8i8-k2gm", limit: 5000 },
-  healKeywords: "liquor authority",
+  priority: "fast",
+  socrata: {
+    host: "data.ny.gov",
+    dataset: "f8i8-k2gm",
+    order: "received_date DESC",
+    limit: 5000,
+  },
+  healKeywords: "liquor authority pending",
   map: (rec) => {
     const appId = clean(rec.application_id);
     if (!appId) return null;
+    const { lat, lng } = extractGeoPoint(rec);
+    const legal = clean(rec.legalname);
     return {
       state: "NY",
       key: `NY-P-${appId}`,
@@ -122,18 +203,18 @@ const NY_PENDING_SPEC: StateSpec = {
       status: clean(rec.status) ?? "Pending",
       licenseType: clean(rec.class) ?? clean(rec.type),
       typeName: clean(rec.description),
-      tradeName: clean(rec.legalname),
-      ownerName: clean(rec.legalname),
+      tradeName: clean(rec.dba) ?? legal,
+      ownerName: legal,
       phone: null,
       address: clean(rec.actual_address_of_premises),
       city: normalizeCity(rec.city),
       zip: cleanZip(rec.zip_code),
-      county: clean(rec.premises_county),
+      county: cleanCounty(rec.premises_county),
       filedAt: safeDate(rec.received_date),
       issuedAt: null,
       expiresAt: null,
-      lat: null,
-      lng: null,
+      lat,
+      lng,
       sourceUrl: "https://data.ny.gov/d/f8i8-k2gm",
     };
   },
@@ -142,11 +223,18 @@ const NY_PENDING_SPEC: StateSpec = {
 const NY_ACTIVE_SPEC: StateSpec = {
   state: "NY",
   label: "New York · active",
-  socrata: { host: "data.ny.gov", dataset: "9s3h-dpkz", limit: 6000 },
-  healKeywords: "liquor authority",
+  priority: "fast",
+  socrata: {
+    host: "data.ny.gov",
+    dataset: "9s3h-dpkz",
+    order: "originalissuedate DESC",
+    limit: 5000,
+  },
+  healKeywords: "liquor authority active",
   map: (rec) => {
     const permitId = clean(rec.licensepermitid);
     if (!permitId) return null;
+    const { lat, lng } = extractGeoPoint(rec);
     return {
       state: "NY",
       key: `NY-L-${permitId}`,
@@ -160,695 +248,21 @@ const NY_ACTIVE_SPEC: StateSpec = {
       address: clean(rec.actualaddressofpremises),
       city: normalizeCity(rec.city),
       zip: cleanZip(rec.zipcode),
-      county: clean(rec.premisescounty),
+      county: cleanCounty(rec.premisescounty),
       filedAt: safeDate(rec.originalissuedate),
       issuedAt: safeDate(rec.lastissuedate) ?? safeDate(rec.effectivedate),
-      expiresAt: safeDate(rec.expirationdate),
-      lat: null,
-      lng: null,
+      expiresAt: safeDate(rec.expirationdate, { allowFutureYears: 10 }),
+      lat,
+      lng,
       sourceUrl: "https://data.ny.gov/d/9s3h-dpkz",
     };
   },
 };
 
 // ---------- CA ----------
-// California ABC publishes a full daily CSV export (pending + active) as a
-// zip, refreshed each business day at 7 a.m. PT. fetchGenericCsv unzips it
-// and strips the agency's "Updated ..." banner line automatically. If the
-// agency ever moves the file, override with CA_EXPORT_URL.
-const CA_SPEC: StateSpec = {
-  state: "CA",
-  label: "California · full export",
-  fetchUrl:
-    process.env.CA_EXPORT_URL ||
-    "https://www.abc.ca.gov/wp-content/uploads/DailyExport-CSV.zip",
-  map: (rec) => {
-    const licenseNo = clean(rec["file number"]);
-    if (!licenseNo) return null;
-    const licOrApp = (clean(rec["lic or app"]) ?? "").toUpperCase();
-    const status = clean(rec["type status"]);
-    const kind =
-      licOrApp.startsWith("APP") || (status ?? "").toUpperCase().includes("PEND")
-        ? "pending"
-        : "active";
-    return {
-      state: "CA",
-      key: `CA-${licenseNo}`,
-      kind,
-      status: status ?? "Active",
-      licenseType: clean(rec["license type"]),
-      typeName: caTypeName(clean(rec["license type"])),
-      tradeName: clean(rec["dba name"]) ?? clean(rec["primary name"]),
-      ownerName: clean(rec["primary name"]),
-      phone: null,
-      address: clean(rec["prem addr 1"]),
-      city: normalizeCity(rec["prem city"]),
-      zip: cleanZip(rec["prem zip"]),
-      county: clean(rec["prem county"]),
-      filedAt: safeDate(rec["type orig iss date"]),
-      issuedAt: safeDate(rec["type orig iss date"]),
-      expiresAt: safeDate(rec["expir date"]),
-      lat: null,
-      lng: null,
-      sourceUrl: "https://www.abc.ca.gov/licensing/licensing-reports/",
-    };
-  },
-};
-
-// ---------- MISSOURI ----------
-// ---------- FL ----------
-// Florida DBPR publishes fresh CSV extracts every morning (public records
-// by law). The retail file covers every beer/wine/spirits retail license in
-// the state — bars, restaurants, package stores — including PENDING
-// applicants (primary status 10 = application in process = gold for leads).
-const FL_STATUS: Record<string, string> = {
-  "10": "Applicant — in process",
-  "11": "Withdrawn",
-  "12": "Application expired",
-  "13": "Denied",
-  "14": "Denied (discipline)",
-  "20": "Current",
-  "21": "Temporary certificate",
-  "22": "Transfer approved",
-  "30": "Current — probation",
-  "31": "Current — obligations",
-  "32": "Current — conditional",
-  "41": "Escrow",
-  "42": "Suspended",
-  "45": "Delinquent",
-  "46": "Voluntary relinquish",
-  "60": "Null & void",
-  "61": "Revoked",
-  "80": "Closed",
-  "90": "Conversion",
-  "99": "Deleted",
-};
-const FL_SERIES: Record<string, string> = {
-  "1": "Quota · beer & wine (package)",
-  "2": "Quota · beer & wine (consumption)",
-  "3": "Quota · beer, wine & spirits (consumption)",
-  "4": "Quota · spirits (package)",
-  "5": "Quota · beer (package)",
-  "6": "Quota · spirits + beer/wine (package)",
-  "7": "Quota · beer (consumption)",
-  "11": "Hotel",
-  "12": "Restaurant · beer & wine",
-  "13": "Restaurant · spirits",
-  "24": "Caterer",
-  "61": "Special restaurant (wine)",
-  "67": "Special restaurant (spirits)",
-};
-const FL_RETAIL_SPEC: StateSpec = {
-  state: "FL",
-  label: "Florida · retail alcohol",
-  fetchUrl:
-    "https://www2.myfloridalicense.com/sto/file_download/extracts/bd4006lic.csv",
-  map: (rec) => {
-    const lic = clean(rec["license number"]);
-    if (!lic) return null;
-    const statusCode = clean(rec["primary status"]) ?? "";
-    const seriesCode = (clean(rec.series) ?? "").match(/^\d+/)?.[0] ?? "";
-    const isPending = statusCode === "10";
-    return {
-      state: "FL",
-      key: `FL-${lic}`,
-      kind: isPending ? "pending" : "active",
-      status: FL_STATUS[statusCode] ?? (statusCode || "Current"),
-      licenseType: clean(rec.series),
-      typeName:
-        FL_SERIES[seriesCode] ??
-        (clean(rec.series) ? `Series ${clean(rec.series)}` : null),
-      tradeName: clean(rec.dba) ?? clean(rec["owner name"]),
-      ownerName: clean(rec["owner name"]),
-      phone: null,
-      address: clean(rec["location address 1"]),
-      city: normalizeCity(rec["location city"]),
-      zip: cleanZip(rec["location zip"]),
-      county: null,
-      filedAt: safeDate(rec["original licensure date"]),
-      issuedAt: safeDate(rec["effective date"]),
-      expiresAt: safeDate(rec["expiration date"]),
-      lat: null,
-      lng: null,
-      sourceUrl:
-        "https://www2.myfloridalicense.com/alcoholic-beverages-and-tobacco/public-records/",
-    };
-  },
-};
-
-// ---------- TTB · FEDERAL (all 50 states) ----------
-// The federal TTB publishes the national permit registry as plain CSVs,
-// refreshed weekly. One schema across all files, and every record carries
-// its own state — so this single block covers ALL 50 states: new
-// wholesalers, importers, wineries, distilleries opening anywhere in the
-// USA become leads the same day we pull them.
-const TTB_KNOWN_FOLDER = "2025-04"; // last manually verified folder (fallback)
-let ttbFolderCache: string | null = null;
-// TTB publishes into dated folders (…/2025-04/…). Instead of hardcoding one
-// month forever, try folders from the current month backwards until one
-// answers — the site can move files and our ingest self-heals.
-async function resolveTtbUrl(file: string): Promise<string> {
-  if (ttbFolderCache) {
-    return `https://www.ttb.gov/system/files/${ttbFolderCache}/${file}.csv`;
-  }
-  const folders: string[] = [];
-  const now = new Date();
-  let y = now.getUTCFullYear();
-  let m = now.getUTCMonth() + 1; // 1-12
-  for (let i = 0; i < 30; i++) {
-    folders.push(`${y}-${String(m).padStart(2, "0")}`);
-    if (`${y}-${String(m).padStart(2, "0")}` === TTB_KNOWN_FOLDER) break;
-    m -= 1;
-    if (m === 0) {
-      m = 12;
-      y -= 1;
-    }
-  }
-  for (const folder of folders) {
-    const url = `https://www.ttb.gov/system/files/${folder}/${file}.csv`;
-    try {
-      const res = await fetch(url, {
-        method: "HEAD",
-        headers: { "User-Agent": "pourwatch/1.0 (+public-records-monitor)" },
-        cache: "no-store",
-      });
-      if (res.ok) {
-        ttbFolderCache = folder;
-        return url;
-      }
-    } catch {
-      // try the next-older folder
-    }
-  }
-  ttbFolderCache = TTB_KNOWN_FOLDER;
-  return `https://www.ttb.gov/system/files/${TTB_KNOWN_FOLDER}/${file}.csv`;
-}
-function mapTtb(rec: Record<string, unknown>): NormalizedRecord | null {
-  const permit = clean(rec.permit_number);
-  const state = (clean(rec.state) ?? "").toUpperCase();
-  if (!permit || state.length !== 2) return null;
-  const isNew = String(rec.new_permit_flag ?? "0").trim() === "1";
-  return {
-    state,
-    key: `TTB-${permit}`,
-    kind: "active",
-    status: isNew ? "Newly issued" : "Active",
-    licenseType: "FED",
-    typeName: clean(rec.industry_type) ?? "Federal alcohol permit",
-    tradeName: clean(rec.operating_name) ?? clean(rec.owner_name),
-    ownerName: clean(rec.owner_name),
-    phone: null,
-    address: clean(rec.street),
-    city: normalizeCity(rec.city),
-    zip: cleanZip(rec.prem_zip),
-    county: clean(rec.prem_county),
-    filedAt: null,
-    issuedAt: null,
-    expiresAt: null,
-    lat: null,
-    lng: null,
-    sourceUrl: "https://www.ttb.gov/public-information/foia/list-of-permittees",
-  };
-}
-function ttbSpec(label: string, file: string, minRows: number): StateSpec {
-  return {
-    state: "US", // pseudo-state for run reporting; records carry real states
-    label,
-    fetchUrlFn: () => resolveTtbUrl(file),
-    minRows,
-    map: mapTtb,
-  };
-}
-const TTB_NEW_SPEC = ttbSpec(
-  "US · TTB permits issued this week",
-  "FRL_Basic_Permits_Issued_Since_the_Last_Publication",
-  10
-);
-const TTB_WHOLESALER_SPEC = ttbSpec(
-  "US · TTB alcohol wholesalers",
-  "FRL_Alcohol_Wholesaler_Permit_List",
-  15000
-);
-const TTB_IMPORTER_SPEC = ttbSpec(
-  "US · TTB alcohol importers",
-  "FRL_Alcohol_Importer_Permit_List",
-  8000
-);
-const TTB_SPIRITS_SPEC = ttbSpec(
-  "US · TTB spirits producers",
-  "FRL_Spirits_Producers_and_Bottlers_List",
-  2500
-);
-const TTB_WINE_SPEC = ttbSpec(
-  "US · TTB wine producers",
-  "FRL_Wine_Producer_and_Blender_Permit_List",
-  8000
-);
-
-const MO_SPEC: StateSpec = {
-  state: "MO",
-  label: "Missouri · liquor licenses",
-  socrata: { host: "data.mo.gov", dataset: "dymb-xy5c", limit: 3000 },
-  healKeywords: "liquor license missouri",
-  map: (rec) => {
-    const lic = clean(rec.license_number);
-    if (!lic) return null;
-    const status = clean(rec.current_status);
-    return {
-      state: "MO",
-      key: `MO-${lic}`,
-      kind: "active",
-      status,
-      licenseType: clean(rec.license_type),
-      typeName: clean(rec.license_type),
-      tradeName: clean(rec.dbaname),
-      ownerName: clean(rec.licensee),
-      phone: null,
-      address: [clean(rec.street_number), clean(rec.street)].filter(Boolean).join(" ") || null,
-      city: normalizeCity(rec.city),
-      zip: cleanZip(rec.zip_code),
-      county: clean(rec.county),
-      filedAt: safeDate(rec.original_date),
-      issuedAt: safeDate(rec.original_date),
-      expiresAt: null,
-      lat: null,
-      lng: null,
-      sourceUrl: "https://data.mo.gov/d/dymb-xy5c",
-    };
-  },
-};
-
-// Missouri also publishes the full ACTIVE register — this one has PHONE
-// NUMBERS, which makes its rows the richest leads in the whole pipeline.
-const MO_ACTIVE_SPEC: StateSpec = {
-  state: "MO",
-  label: "Missouri · active register",
-  socrata: { host: "data.mo.gov", dataset: "yyhn-562y", limit: 8000 },
-  map: (rec) => {
-    const lic = clean(rec.primary_license);
-    if (!lic) return null;
-    return {
-      state: "MO",
-      key: `MO-A-${lic}`,
-      kind: "active",
-      status: "Active",
-      licenseType: clean(rec.primary_type),
-      typeName: clean(rec.primary_type),
-      tradeName: clean(rec.dbaname) ?? clean(rec.licensee),
-      ownerName: clean(rec.licensee),
-      phone: clean(rec.phone_number),
-      address:
-        [clean(rec.street_number), clean(rec.street)].filter(Boolean).join(" ") ||
-        null,
-      city: normalizeCity(rec.city),
-      zip: cleanZip(rec.zipcode),
-      county: clean(rec.county),
-      filedAt: null,
-      issuedAt: null,
-      expiresAt: null,
-      lat: null,
-      lng: null,
-      sourceUrl: "https://data.mo.gov/d/yyhn-562y",
-    };
-  },
-};
-
-// ---------- COLORADO ----------
-const CO_SPEC: StateSpec = {
-  state: "CO",
-  label: "Colorado · recently approved",
-  socrata: { host: "data.colorado.gov", dataset: "htyp-tqzh", limit: 3000 },
-  map: (rec) => {
-    const lic = clean(rec.license_number);
-    if (!lic) return null;
-    // Colorado's feed is messy: for many rows `license_number` actually
-    // contains the approval DATE ("2025-09-16") while `issue_date` holds a
-    // corrupt year (e.g. 2262). Recover the real date when we can, and make
-    // keys collision-free so two venues approved the same day don't clash.
-    const dateInLic = /^\d{4}-\d{2}-\d{2}/.test(lic) ? safeDate(lic) : null;
-    const when = dateInLic ?? safeDate(rec.issue_date);
-    const licLooksLikeDate = dateInLic !== null;
-    const owner = clean(rec.licensee_name) ?? clean(rec.doing_business_as) ?? "unknown";
-    const key = licLooksLikeDate
-      ? `CO-${lic}-${owner.toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 16)}`
-      : `CO-${lic}`;
-    return {
-      state: "CO",
-      key,
-      kind: "active",
-      status: "Approved",
-      licenseType: clean(rec.license_type),
-      typeName: clean(rec.license_type),
-      tradeName: clean(rec.doing_business_as),
-      ownerName: clean(rec.licensee_name),
-      phone: null,
-      address: clean(rec.street_address),
-      city: normalizeCity(rec.city),
-      zip: cleanZip(rec.zip),
-      county: null,
-      filedAt: when,
-      issuedAt: when,
-      expiresAt: null,
-      lat: null,
-      lng: null,
-      sourceUrl: "https://data.colorado.gov/d/htyp-tqzh",
-    };
-  },
-};
-
-// Colorado's complete license register — every active license statewide.
-const CO_FULL_SPEC: StateSpec = {
-  state: "CO",
-  label: "Colorado · full register",
-  socrata: { host: "data.colorado.gov", dataset: "ier5-5ms2", limit: 20000 },
-  map: (rec) => {
-    const lic = clean(rec.license_number);
-    if (!lic) return null;
-    return {
-      state: "CO",
-      key: `CO-F-${lic}`,
-      kind: "active",
-      status: "Active",
-      licenseType: clean(rec.license_type),
-      typeName: clean(rec.license_type),
-      tradeName: clean(rec.doing_business_as),
-      ownerName: clean(rec.licensee_name),
-      phone: null,
-      address: clean(rec.street_address),
-      city: normalizeCity(rec.city),
-      zip: cleanZip(rec.zip),
-      county: null,
-      filedAt: null,
-      issuedAt: null,
-      expiresAt: safeDate(rec.expiration),
-      lat: null,
-      lng: null,
-      sourceUrl: "https://data.colorado.gov/d/ier5-5ms2",
-    };
-  },
-};
-
-// ---------- CONNECTICUT ----------
-const CT_SPEC: StateSpec = {
-  state: "CT",
-  label: "Connecticut · restaurant liquor",
-  socrata: { host: "data.ct.gov", dataset: "gm8q-ur5f", limit: 4000 },
-  map: (rec) => {
-    const id = clean(rec.credentialid);
-    if (!id) return null;
-    return {
-      state: "CT",
-      key: `CT-${id}`,
-      kind: "active",
-      status: clean(rec.status) ?? "Active",
-      licenseType: clean(rec.credentialtype),
-      typeName: clean(rec.credentialtype) === "LIR" ? "Restaurant Liquor" : clean(rec.credentialtype),
-      tradeName: clean(rec.dba),
-      ownerName: clean(rec.name),
-      phone: null,
-      address: clean(rec.address),
-      city: normalizeCity(rec.city),
-      zip: cleanZip(rec.zip),
-      county: clean(rec.county) ?? clean(rec.town),
-      filedAt: safeDate(rec.issuedate),
-      issuedAt: safeDate(rec.issuedate),
-      expiresAt: safeDate(rec.expirationdate),
-      lat: null,
-      lng: null,
-      sourceUrl: "https://data.ct.gov/d/gm8q-ur5f",
-    };
-  },
-};
-
-// Connecticut also breaks out cafes and taverns — two more venue categories
-// for the same pipeline. Separate key prefixes keep them collision-free.
-const CT_CAFE_SPEC: StateSpec = {
-  state: "CT",
-  label: "Connecticut · cafe liquor",
-  socrata: { host: "data.ct.gov", dataset: "q22c-zdg8", limit: 3000 },
-  map: (rec) => {
-    const id = clean(rec.credentialid);
-    if (!id) return null;
-    return {
-      state: "CT",
-      key: `CT-C-${id}`,
-      kind: "active",
-      status: clean(rec.status) ?? "Active",
-      licenseType: clean(rec.credentialtype),
-      typeName: "Cafe Liquor",
-      tradeName: clean(rec.dba),
-      ownerName: clean(rec.name),
-      phone: null,
-      address: clean(rec.address),
-      city: normalizeCity(rec.city),
-      zip: cleanZip(rec.zip),
-      county: null,
-      filedAt: safeDate(rec.issuedate),
-      issuedAt: safeDate(rec.issuedate),
-      expiresAt: safeDate(rec.expirationdate),
-      lat: null,
-      lng: null,
-      sourceUrl: "https://data.ct.gov/d/q22c-zdg8",
-    };
-  },
-};
-
-const CT_TAVERN_SPEC: StateSpec = {
-  state: "CT",
-  label: "Connecticut · tavern liquor",
-  socrata: { host: "data.ct.gov", dataset: "rz33-sg3g", limit: 3000 },
-  map: (rec) => {
-    const id = clean(rec.credentialid);
-    if (!id) return null;
-    return {
-      state: "CT",
-      key: `CT-T-${id}`,
-      kind: "active",
-      status: clean(rec.status) ?? "Active",
-      licenseType: clean(rec.credentialtype),
-      typeName: "Tavern Liquor",
-      tradeName: clean(rec.dba) ?? clean(rec.businessname),
-      ownerName: clean(rec.name),
-      phone: null,
-      address: clean(rec.address),
-      city: normalizeCity(rec.city),
-      zip: cleanZip(rec.zip),
-      county: null,
-      filedAt: safeDate(rec.issuedate),
-      issuedAt: safeDate(rec.issuedate),
-      expiresAt: safeDate(rec.expirationdate),
-      lat: null,
-      lng: null,
-      sourceUrl: "https://data.ct.gov/d/rz33-sg3g",
-    };
-  },
-};
-
-// ---------- WASHINGTON ----------
-const WA_SPEC: StateSpec = {
-  state: "WA",
-  label: "Washington · LCB renewals + licenses",
-  socrata: { host: "data.wa.gov", dataset: "9dee-kzm5", limit: 5000 },
-  map: (rec) => {
-    const lic = clean(rec.license);
-    if (!lic) return null;
-    return {
-      state: "WA",
-      key: `WA-${lic}`,
-      kind: "active",
-      status: "Licensed",
-      licenseType: clean(rec.l_a_type),
-      typeName: clean(rec.l_a_type),
-      tradeName: clean(rec.tradename),
-      ownerName: clean(rec.tradename),
-      phone: clean(rec.dayphone),
-      address: clean(rec.streetaddress),
-      city: normalizeCity(rec.city),
-      zip: cleanZip(rec.zipcode),
-      county: clean(rec.countycode),
-      filedAt: null,
-      issuedAt: null,
-      expiresAt: null,
-      lat: null,
-      lng: null,
-      sourceUrl: "https://data.wa.gov/d/9dee-kzm5",
-    };
-  },
-};
-
-// Washington NEW APPLICATIONS — pending filings with a daytime phone number,
-// the richest single lead signal we have (application date + phone).
-const WA_APPS_SPEC: StateSpec = {
-  state: "WA",
-  label: "Washington · new applications",
-  socrata: { host: "data.wa.gov", dataset: "vgcw-qfjm", limit: 5000 },
-  healKeywords: "liquor cannabis board application",
-  map: (rec) => {
-    const lic = clean(rec.license);
-    if (!lic) return null;
-    // applicationdate arrives as YYYYMMDD ("20260917")
-    const d = clean(rec.applicationdate);
-    const filedAt =
-      d && /^\d{8}$/.test(d)
-        ? new Date(`${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}T00:00:00Z`)
-        : null;
-    return {
-      state: "WA",
-      key: `WA-A-${lic}`,
-      kind: "pending",
-      status: "Application filed",
-      licenseType: clean(rec.l_a_type),
-      typeName: clean(rec.l_a_type),
-      tradeName: clean(rec.tradename) ?? clean(rec.licenseename),
-      ownerName: clean(rec.licenseename),
-      phone: clean(rec.dayphone),
-      address: clean(rec.streetaddress),
-      city: normalizeCity(rec.city),
-      zip: cleanZip(rec.zipcode),
-      county: clean(rec.countyname),
-      filedAt,
-      issuedAt: null,
-      expiresAt: null,
-      lat: null,
-      lng: null,
-      sourceUrl: "https://data.wa.gov/d/vgcw-qfjm",
-    };
-  },
-};
-
-// Colorado venues that EXPIRED or SURRENDERED their license — for distributors
-// this is the "account up for grabs" signal: a closed venue's beer/wine
-// contract reopens.
-const CO_CLOSED_SPEC: StateSpec = {
-  state: "CO",
-  label: "Colorado · closed + surrendered licenses",
-  socrata: { host: "data.colorado.gov", dataset: "pwjb-9dd5", limit: 5000 },
-  healKeywords: "expired surrendered liquor licenses colorado",
-  map: (rec) => {
-    const lic = clean(rec.licensenumber);
-    if (!lic) return null;
-    const status = clean(rec.licensestatus) ?? "Expired";
-    return {
-      state: "CO",
-      key: `CO-X-${lic}`,
-      kind: "active",
-      status,
-      licenseType: clean(rec.licensetype),
-      typeName: clean(rec.licensetype),
-      tradeName: clean(rec.doingbusinessas) ?? clean(rec.companyname),
-      ownerName: clean(rec.companyname),
-      phone: null,
-      address: clean(rec.streetaddress),
-      city: normalizeCity(rec.city),
-      zip: cleanZip(rec.zip),
-      county: null,
-      filedAt: null,
-      issuedAt: null,
-      expiresAt: safeDate(rec.expirationdate),
-      lat: null,
-      lng: null,
-      sourceUrl: "https://data.colorado.gov/d/pwjb-9dd5",
-    };
-  },
-};
-
-// ---------- ILLINOIS (Chicago) ----------
-// Chicago publishes the full liquor-license register (including taverns,
-// restaurants, package stores) with neighborhood and ward data.
-const IL_SPEC: StateSpec = {
-  state: "IL",
-  label: "Illinois · Chicago liquor licenses",
-  socrata: { host: "data.cityofchicago.org", dataset: "nrmj-3kcf", limit: 6000 },
-  map: (rec) => {
-    const id = clean(rec.license_number) ?? clean(rec.id);
-    if (!id) return null;
-    const zip = cleanZip(rec.zip_code);
-    const description = clean(rec.license_description) ?? clean(rec.business_activity);
-    return {
-      state: "IL",
-      key: `IL-${id}`,
-      kind: "active",
-      status: "Licensed",
-      licenseType: clean(rec.license_code),
-      typeName: description,
-      tradeName: clean(rec.doing_business_as_name),
-      ownerName: clean(rec.legal_name),
-      phone: null,
-      address: clean(rec.address),
-      city: normalizeCity(rec.city) ?? "Chicago",
-      zip,
-      county: clean(rec.neighborhood) ?? clean(rec.community_area_name) ?? "Cook",
-      filedAt: safeDate(rec.license_start_date) ?? safeDate(rec.date_issued),
-      issuedAt: safeDate(rec.date_issued) ?? safeDate(rec.license_start_date),
-      expiresAt: safeDate(rec.expiration_date) ?? safeDate(rec.license_term_expiration_date),
-      lat: null,
-      lng: null,
-      sourceUrl: "https://data.cityofchicago.org/d/nrmj-3kcf",
-    };
-  },
-};
-
-// ---------- CALIFORNIA (Napa County — real CA data) ----------
-// Napa County publishes its alcohol retail licenses on its own Socrata
-// portal. Real California license numbers, types, and premises addresses.
-// Additional CA counties can be layered in the same way.
-const NAPA_SPEC: StateSpec = {
-  state: "CA",
-  label: "California · Napa County alcohol retail licenses",
-  socrata: { host: "data.napacounty.gov", dataset: "8rw6-hhca", limit: 2000 },
-  map: (rec) => {
-    const lic = clean(rec.license_number);
-    if (!lic) return null;
-    const addr = clean(rec.premises_addr) ?? clean(rec.address);
-    // Format: "494 SOSCOL AVE,NAPA, CA  94559-4004"
-    // City = the part immediately before the state+zip part.
-    let city: string | null = null;
-    let zip: string | null = null;
-    if (addr) {
-      const parts = addr.split(",").map((p) => p.trim()).filter(Boolean);
-      for (let i = parts.length - 1; i >= 0; i--) {
-        if (/^[A-Z]{2}\s+\d{5}/.test(parts[i])) {
-          const candidate = parts[i - 1];
-          if (candidate && !/^#/.test(candidate) && /[A-Za-z]{3}/.test(candidate)) {
-            city = candidate.replace(/\s+/g, " ");
-          }
-          break;
-        }
-      }
-      // Fallback: a two-letter state + zip tail without comma split.
-      if (!city) {
-        const m = addr.match(/,\s*([A-Za-z .'\-]{3,}),?\s*[A-Z]{2}\s+\d{5}/);
-        if (m) city = m[1].trim();
-      }
-      const zipMatch = addr.match(/(\d{5})(?:-\d{4})?\s*$/);
-      if (zipMatch) zip = zipMatch[1];
-    }
-    const geo = rec.geo_point as { coordinates?: [number, number] } | undefined;
-    return {
-      state: "CA",
-      key: `CA-${lic}`,
-      kind: (clean(rec.status) ?? "").toUpperCase() === "ACTIVE" ? "active" : "pending",
-      status: clean(rec.status),
-      licenseType: clean(rec.license_type),
-      typeName: caTypeName(clean(rec.license_type)),
-      tradeName: clean(rec.business_name),
-      ownerName: clean(rec.primary_owner),
-      phone: null,
-      address: addr,
-      city,
-      zip,
-      county: "Napa",
-      filedAt: safeDate(rec.orig_iss_date),
-      issuedAt: safeDate(rec.orig_iss_date),
-      expiresAt: safeDate(rec.expir_date),
-      lat: geo?.coordinates?.[1] ?? null,
-      lng: geo?.coordinates?.[0] ?? null,
-      sourceUrl: "https://data.napacounty.gov/d/8rw6-hhca",
-    };
-  },
-};
-
-// California ABC license type codes in plain English.
+// California ABC publishes a daily full CSV export inside a ZIP (~7.4MB zip,
+// ~28MB uncompressed, refreshed each morning). Streaming line-by-line parse
+// keeps memory low and composite keys prevent multi-type collisions.
 function caTypeName(code: string | null): string | null {
   if (!code) return null;
   const map: Record<string, string> = {
@@ -882,65 +296,517 @@ function caTypeName(code: string | null): string | null {
   return map[code] ?? `ABC Type ${code}`;
 }
 
-// ---------- MARYLAND (Montgomery County) ----------
-const MD_SPEC: StateSpec = {
-  state: "MD",
-  label: "Maryland · Montgomery County ABS licensees",
-  socrata: { host: "data.montgomerycountymd.gov", dataset: "c6rw-fazn", limit: 3000 },
+const CA_SPEC: StateSpec = {
+  state: "CA",
+  label: "California · ABC daily filings",
+  priority: "fast",
+  isStaticRegister: false,
+  fetchUrl:
+    process.env.CA_EXPORT_URL ||
+    "https://www.abc.ca.gov/wp-content/uploads/DailyExport-CSV.zip",
+  minRows: 200,
   map: (rec) => {
-    const id = clean(rec.licensee_number) ?? clean(rec.license_number);
-    if (!id) return null;
-    const licType = clean(rec.licensetype);
-    const licClass = clean(rec.licenseclass);
+    const licenseNo = clean(rec["file number"]);
+    if (!licenseNo) return null;
+    const licOrApp = (clean(rec["lic or app"]) ?? "").toUpperCase();
+    const status = (clean(rec["type status"]) ?? "").toUpperCase();
+    const isPending = licOrApp.startsWith("APP") || status.includes("PEND");
+    const isActive = status === "ACTIVE" || status === "LIC";
+    if (!isPending && !isActive) return null;
+
+    const licType = clean(rec["license type"]) ?? "00";
+    // Skip 1-day special event permits (71/72) — keep real venues & stores.
+    if (licType === "71" || licType === "72") return null;
+
+    const issued = safeDate(rec["type orig iss date"]);
+    // Keep ALL pending applications + active licenses issued in the last 180 days
+    // so CA runs in ~3-4s cleanly inside Vercel Hobby without 90k ancient rows.
+    const cutoff180 = Date.now() - 180 * 86_400_000;
+    if (!isPending && (!issued || issued.getTime() < cutoff180)) {
+      return null;
+    }
+
     return {
-      state: "MD",
-      key: `MD-${id}`,
-      kind: "active",
-      status: "Licensed",
-      licenseType: licClass,
-      typeName: licType ?? licClass,
-      tradeName: clean(rec.account_name),
-      ownerName: clean(rec.licensee_name),
+      state: "CA",
+      key: `CA-${licenseNo}-${licType}`,
+      kind: isPending ? "pending" : "active",
+      status: isPending ? "Pending" : "Active",
+      licenseType: licType,
+      typeName: caTypeName(licType),
+      tradeName: clean(rec["dba name"]) ?? clean(rec["primary name"]),
+      ownerName: clean(rec["primary name"]),
       phone: null,
-      address: clean(rec.street),
+      address: clean(rec["prem addr 1"]),
+      mailAddress: clean(rec["mail addr 1"]),
+      city: normalizeCity(rec["prem city"]),
+      zip: cleanZip(rec["prem zip"]),
+      county: cleanCounty(rec["prem county"]),
+      filedAt: issued,
+      issuedAt: isPending ? null : issued,
+      expiresAt: safeDate(rec["expir date"], { allowFutureYears: 10 }),
+      lat: null,
+      lng: null,
+      sourceUrl: "https://www.abc.ca.gov/licensing/licensing-reports/",
+    };
+  },
+};
+
+// ---------- MISSOURI ----------
+const MO_SPEC: StateSpec = {
+  state: "MO",
+  label: "Missouri · new liquor licenses",
+  priority: "fast",
+  socrata: {
+    host: "data.mo.gov",
+    dataset: "dymb-xy5c",
+    order: ":updated_at DESC",
+    limit: 3000,
+  },
+  healKeywords: "new liquor licenses missouri",
+  map: (rec) => {
+    const lic = clean(rec.license_number);
+    if (!lic) return null;
+    return {
+      state: "MO",
+      key: `MO-${lic}`,
+      kind: "active",
+      status: clean(rec.current_status) ?? "Active",
+      licenseType: clean(rec.license_type),
+      typeName: clean(rec.license_type),
+      tradeName: clean(rec.dbaname) ?? clean(rec.licensee),
+      ownerName: clean(rec.licensee),
+      phone: null,
+      address:
+        [clean(rec.street_number), clean(rec.street)].filter(Boolean).join(" ") ||
+        null,
       city: normalizeCity(rec.city),
-      zip: cleanZip(rec.zip),
-      county: "Montgomery",
+      zip: cleanZip(rec.zip_code),
+      county: cleanCounty(rec.county),
+      filedAt: safeDate(rec.original_date),
+      issuedAt: safeDate(rec.original_date),
+      expiresAt: null,
+      lat: null,
+      lng: null,
+      sourceUrl: "https://data.mo.gov/d/dymb-xy5c",
+    };
+  },
+};
+
+const MO_ACTIVE_SPEC: StateSpec = {
+  state: "MO",
+  label: "Missouri · active w/ phones",
+  priority: "fast",
+  isStaticRegister: true,
+  socrata: {
+    host: "data.mo.gov",
+    dataset: "yyhn-562y",
+    order: ":updated_at DESC",
+    limit: 4000,
+  },
+  healKeywords: "active alcohol license missouri",
+  map: (rec) => {
+    const lic = clean(rec.primary_license);
+    if (!lic) return null;
+    return {
+      state: "MO",
+      key: `MO-A-${lic}`,
+      kind: "active",
+      status: "Active",
+      licenseType: clean(rec.primary_type),
+      typeName: clean(rec.primary_type),
+      tradeName: clean(rec.dbaname) ?? clean(rec.licensee),
+      ownerName: clean(rec.licensee),
+      contactName: clean(rec.name),
+      phone: clean(rec.phone_number ?? rec.phone),
+      address:
+        [clean(rec.street_number), clean(rec.street)].filter(Boolean).join(" ") ||
+        null,
+      city: normalizeCity(rec.city),
+      zip: cleanZip(rec.zipcode),
+      county: cleanCounty(rec.county),
       filedAt: null,
       issuedAt: null,
       expiresAt: null,
       lat: null,
       lng: null,
-      sourceUrl: "https://data.montgomerycountymd.gov/d/c6rw-fazn",
+      sourceUrl: "https://data.mo.gov/d/yyhn-562y",
+    };
+  },
+};
+
+const MO_CLOSED_SPEC: StateSpec = {
+  state: "MO",
+  label: "Missouri · out of business",
+  priority: "fast",
+  allowEmpty: true,
+  socrata: {
+    host: "data.mo.gov",
+    dataset: "nytw-fmz3",
+    order: ":updated_at DESC",
+    limit: 1500,
+  },
+  healKeywords: "alcohol licenses out of business missouri",
+  map: (rec) => {
+    const lic = clean(rec.license_number);
+    if (!lic) return null;
+    const licType = clean(rec.license_type) ?? "";
+    // Skip non-alcohol administrative permissions (e.g. "Permission - Employ Minors")
+    if (/employ minors|picnic|caterer temporary/i.test(licType)) return null;
+    const when = safeDate(rec.status_effective_date);
+    return {
+      state: "MO",
+      key: `MO-X-${lic}`,
+      kind: "active",
+      status: clean(rec.license_current_status) ?? "Out of Business",
+      licenseType: clean(rec.license_type),
+      typeName: clean(rec.license_type),
+      tradeName: clean(rec.dba_name) ?? clean(rec.licensee_name),
+      ownerName: clean(rec.licensee_name),
+      phone: null,
+      address:
+        [clean(rec.street_number), clean(rec.street_name)]
+          .filter(Boolean)
+          .join(" ") || null,
+      city: normalizeCity(rec.city),
+      zip: cleanZip(rec.zip_code),
+      county: cleanCounty(rec.county),
+      filedAt: when,
+      issuedAt: when,
+      expiresAt: null,
+      lat: null,
+      lng: null,
+      sourceUrl: "https://data.mo.gov/d/nytw-fmz3",
+    };
+  },
+};
+
+// ---------- COLORADO ----------
+const CO_SPEC: StateSpec = {
+  state: "CO",
+  label: "Colorado · recently approved",
+  priority: "fast",
+  socrata: {
+    host: "data.colorado.gov",
+    dataset: "htyp-tqzh",
+    order: ":updated_at DESC",
+    limit: 3000,
+  },
+  healKeywords: "recently approved liquor licenses colorado",
+  map: (rec) => {
+    const lic = clean(rec.license_number);
+    if (!lic) return null;
+    const dateInLic = /^\d{4}-\d{2}-\d{2}/.test(lic) ? safeDate(lic) : null;
+    const when = dateInLic ?? safeDate(rec.issue_date);
+    const owner =
+      clean(rec.licensee_name) ?? clean(rec.doing_business_as) ?? "unknown";
+    const key =
+      dateInLic !== null
+        ? `CO-${lic}-${owner.toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 16)}`
+        : `CO-${lic}`;
+    return {
+      state: "CO",
+      key,
+      kind: "active",
+      status: "Approved",
+      licenseType: clean(rec.license_type),
+      typeName: clean(rec.license_type),
+      tradeName: clean(rec.doing_business_as) ?? clean(rec.licensee_name),
+      ownerName: clean(rec.licensee_name),
+      phone: null,
+      address: clean(rec.street_address),
+      city: normalizeCity(rec.city),
+      zip: cleanZip(rec.zip),
+      county: null,
+      filedAt: when,
+      issuedAt: when,
+      expiresAt: null,
+      lat: null,
+      lng: null,
+      sourceUrl: "https://data.colorado.gov/d/htyp-tqzh",
+    };
+  },
+};
+
+const CO_CLOSED_SPEC: StateSpec = {
+  state: "CO",
+  label: "Colorado · closed + surrendered",
+  priority: "fast",
+  socrata: {
+    host: "data.colorado.gov",
+    dataset: "pwjb-9dd5",
+    order: "expirationdate DESC",
+    limit: 3000,
+  },
+  healKeywords: "expired surrendered liquor licenses colorado",
+  map: (rec) => {
+    const lic = clean(rec.licensenumber);
+    if (!lic) return null;
+    const licType = clean(rec.licensetype) ?? "";
+    // Exclude tobacco/vape/smoke shops — keep strictly alcohol venues.
+    if (/tobacco|vape|smoke|nicotine|cigarette/i.test(licType)) return null;
+    const status = clean(rec.licensestatus) ?? "Expired";
+    const exp = safeDate(rec.expirationdate);
+    return {
+      state: "CO",
+      key: `CO-X-${lic}`,
+      kind: "active",
+      status,
+      licenseType: clean(rec.licensetype),
+      typeName: clean(rec.licensetype),
+      tradeName: clean(rec.doingbusinessas) ?? clean(rec.companyname),
+      ownerName: clean(rec.companyname),
+      phone: null,
+      address: clean(rec.streetaddress),
+      city: normalizeCity(rec.city),
+      zip: cleanZip(rec.zip),
+      county: null,
+      filedAt: exp,
+      issuedAt: exp,
+      expiresAt: safeDate(rec.expirationdate, { allowFutureYears: 10 }),
+      lat: null,
+      lng: null,
+      sourceUrl: "https://data.colorado.gov/d/pwjb-9dd5",
+    };
+  },
+};
+
+// ---------- CONNECTICUT ----------
+// Connecticut's live unified Liquor Permits dataset (includes named permittees!).
+const CT_PERMITS_SPEC: StateSpec = {
+  state: "CT",
+  label: "Connecticut · all liquor permits",
+  priority: "fast",
+  socrata: {
+    host: "data.ct.gov",
+    dataset: "gwv2-eswx",
+    where: "status='ACTIVE' OR status='PENDING'",
+    order: ":updated_at DESC",
+    limit: 4000,
+  },
+  healKeywords: "liquor permits connecticut",
+  map: (rec) => {
+    const cred = clean(rec.credential);
+    if (!cred) return null;
+    const status = (clean(rec.status) ?? "ACTIVE").toUpperCase();
+    const isPending = status.includes("PEND");
+    const prefix = cred.split(".")[0] ?? "";
+    // Skip 1-day nonprofit/picnic temporary permits (LTN/LTP)
+    if (prefix === "LTN" || prefix === "LTP") return null;
+    const CT_PREFIX: Record<string, string> = {
+      LIR: "Restaurant Liquor",
+      LCA: "Cafe Liquor",
+      LIP: "Package Store Liquor",
+      LGB: "Grocery Store Beer",
+      LRW: "Restaurant Wine & Beer",
+      LTR: "Tavern Liquor",
+      LCL: "Club Liquor",
+      LHO: "Hotel Liquor",
+      LIW: "Wholesaler Liquor",
+      LMB: "Manufacturer Brewpub",
+    };
+    const permittee =
+      clean(rec.permittee_name) ??
+      ([clean(rec.permittee_first_name), clean(rec.permittee_last_name)]
+        .filter(Boolean)
+        .join(" ") ||
+        null);
+    return {
+      state: "CT",
+      key: `CT-P-${cred}`,
+      kind: isPending ? "pending" : "active",
+      status: isPending ? "Pending" : "Active",
+      licenseType: prefix || null,
+      typeName: CT_PREFIX[prefix] ?? (prefix ? `CT Permit ${prefix}` : "Liquor Permit"),
+      tradeName: clean(rec.dba) ?? clean(rec.backer),
+      ownerName: clean(rec.backer),
+      contactName: permittee ? normalizeCity(permittee) : null,
+      phone: null,
+      address: clean(rec.permit_address) ?? clean(rec.backer_address),
+      mailAddress: clean(rec.backer_address),
+      city: normalizeCity(rec.permit_city ?? rec.backer_city),
+      zip: cleanZip(rec.permit_zip ?? rec.backer_zip),
+      county: null,
+      filedAt: safeDate(rec.effective_date),
+      issuedAt: safeDate(rec.effective_date),
+      expiresAt: safeDate(rec.expire_date, { allowFutureYears: 10 }),
+      lat: null,
+      lng: null,
+      sourceUrl: "https://data.ct.gov/d/gwv2-eswx",
+    };
+  },
+};
+
+// ---------- WASHINGTON ----------
+const WA_SPEC: StateSpec = {
+  state: "WA",
+  label: "Washington · LCB renewals",
+  priority: "fast",
+  isStaticRegister: true,
+  socrata: {
+    host: "data.wa.gov",
+    dataset: "9dee-kzm5",
+    order: "renewaldate DESC",
+    limit: 5000,
+  },
+  healKeywords: "liquor renewal washington",
+  map: (rec) => {
+    const lic = clean(rec.license);
+    if (!lic) return null;
+    const { lat, lng } = extractGeoPoint(rec);
+    return {
+      state: "WA",
+      key: `WA-${lic}`,
+      kind: "active",
+      status: "Licensed",
+      licenseType: clean(rec.l_a_type),
+      typeName: clean(rec.privdesc01) ?? clean(rec.l_a_type),
+      tradeName: clean(rec.tradename),
+      ownerName: clean(rec.tradename),
+      contactName: clean(rec.designatedsignee) ? normalizeCity(rec.designatedsignee) : null,
+      phone: clean(rec.dayphone),
+      address: clean(rec.streetaddress),
+      mailAddress: clean(rec.mailaddress),
+      city: normalizeCity(rec.city ?? rec.cityname),
+      zip: cleanZip(rec.zipcode),
+      county: cleanCounty(rec.countyname ?? rec.countycode),
+      filedAt: safeDate(rec.renewaldate),
+      issuedAt: safeDate(rec.renewaldate),
+      expiresAt: null,
+      lat,
+      lng,
+      sourceUrl: "https://data.wa.gov/d/9dee-kzm5",
+    };
+  },
+};
+
+// Rolling weekday feed: WA LCB Local Authority Letters (can legitimately be empty on Sundays).
+const WA_APPS_SPEC: StateSpec = {
+  state: "WA",
+  label: "Washington · new applications",
+  priority: "fast",
+  allowEmpty: true,
+  socrata: {
+    host: "data.wa.gov",
+    dataset: "vgcw-qfjm",
+    order: "applicationdate DESC",
+    limit: 5000,
+  },
+  healKeywords: "liquor cannabis board local authority",
+  map: (rec) => {
+    const lic = clean(rec.license);
+    if (!lic) return null;
+    const { lat, lng } = extractGeoPoint(rec);
+    return {
+      state: "WA",
+      key: `WA-A-${lic}`,
+      kind: "pending",
+      status: "Application filed",
+      licenseType: clean(rec.l_a_type),
+      typeName: clean(rec.privdesc01) ?? clean(rec.l_a_type),
+      tradeName: clean(rec.tradename) ?? clean(rec.licenseename),
+      ownerName: clean(rec.licenseename),
+      phone: clean(rec.dayphone),
+      address: clean(rec.streetaddress),
+      city: normalizeCity(rec.city ?? rec.cityname),
+      zip: cleanZip(rec.zipcode),
+      county: cleanCounty(rec.countyname),
+      filedAt: safeDate(rec.applicationdate),
+      issuedAt: null,
+      expiresAt: null,
+      lat,
+      lng,
+      sourceUrl: "https://data.wa.gov/d/vgcw-qfjm",
+    };
+  },
+};
+
+// ---------- ILLINOIS (Chicago Metro — New Openings Only) ----------
+const IL_SPEC: StateSpec = {
+  state: "IL",
+  label: "Illinois · Chicago new openings",
+  priority: "fast",
+  socrata: {
+    host: "data.cityofchicago.org",
+    dataset: "nrmj-3kcf",
+    where: "application_type='ISSUE'",
+    order: "date_issued DESC",
+    limit: 3000,
+  },
+  healKeywords: "liquor licenses chicago",
+  map: (rec) => {
+    const id = clean(rec.license_number) ?? clean(rec.id);
+    if (!id) return null;
+    const statusMap: Record<string, string> = {
+      AAI: "Active",
+      AAC: "Canceled",
+      REV: "Revoked",
+      REA: "Revoked",
+      INQ: "Pending",
+    };
+    const rawStatus = clean(rec.license_status) ?? "AAI";
+    const status = statusMap[rawStatus] ?? rawStatus;
+    const description =
+      clean(rec.license_description) ?? clean(rec.business_activity);
+    const hood = normalizeCity(rec.neighborhood ?? rec.community_area_name);
+    return {
+      state: "IL",
+      key: `IL-${id}`,
+      kind: rawStatus === "INQ" ? "pending" : "active",
+      status,
+      licenseType: clean(rec.license_code),
+      typeName: description,
+      tradeName: clean(rec.doing_business_as_name) ?? clean(rec.legal_name),
+      ownerName: clean(rec.legal_name),
+      phone: null,
+      address: clean(rec.address),
+      neighborhood: hood,
+      city: normalizeCity(rec.city) ?? "Chicago",
+      zip: cleanZip(rec.zip_code),
+      county: hood ?? "Cook",
+      filedAt: safeDate(rec.license_start_date) ?? safeDate(rec.date_issued),
+      issuedAt: safeDate(rec.date_issued) ?? safeDate(rec.license_start_date),
+      expiresAt: safeDate(rec.expiration_date ?? rec.license_term_expiration_date, {
+        allowFutureYears: 10,
+      }),
+      lat: safeCoord(rec.latitude),
+      lng: safeCoord(rec.longitude),
+      sourceUrl: "https://data.cityofchicago.org/d/nrmj-3kcf",
     };
   },
 };
 
 // ---------- OREGON ----------
-// OLCC publishes both the full licensed register AND, more importantly,
-// licence applications received — including "In Review" and
-// "Payment Pending" statuses, which are the earliest possible signal
-// that a venue is being built.
 const OR_APPS_SPEC: StateSpec = {
   state: "OR",
-  label: "Oregon · licence applications received",
-  socrata: { host: "data.oregon.gov", dataset: "qad4-bnxp", limit: 5000 },
+  label: "Oregon · applications received",
+  priority: "fast",
+  socrata: {
+    host: "data.oregon.gov",
+    dataset: "qad4-bnxp",
+    order: "date_received DESC",
+    limit: 4000,
+  },
+  healKeywords: "OLCC liquor applications",
   map: (rec) => {
     const trade = clean(rec.trade_name);
     const addr = clean(rec.address);
+    if (!trade && !addr) return null;
     const licType = clean(rec.license_type);
     const status = clean(rec.application_status);
     const received = safeDate(rec.date_received);
-    // Build a stable key: no licence number exists in the applications feed,
-    // so use the trade name + address + received date.
-    const key = `OR-A-${(trade ?? "unknown").slice(0, 24)}-${(addr ?? "").slice(0, 24)}-${received?.toISOString().slice(0, 10) ?? "na"}`;
-    if (!trade && !addr) return null;
+    const key = `OR-A-${(trade ?? "unknown")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "")
+      .slice(0, 20)}-${(addr ?? "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "")
+      .slice(0, 20)}-${received?.toISOString().slice(0, 10) ?? "na"}`;
     let city: string | null = null;
     let zip: string | null = null;
     if (addr) {
-      const m = addr.match(/,\s*([A-Za-z .'\-]{3,})\s+OR\s+(\d{5})/);
+      const m = addr.match(/,?\s*([A-Za-z .'\-]{3,})\s+OR\s+(\d{5})/);
       if (m) {
-        city = m[1].trim();
+        city = normalizeCity(m[1]);
         zip = m[2];
       }
     }
@@ -971,13 +837,19 @@ const OR_APPS_SPEC: StateSpec = {
 const OR_LICENSES_SPEC: StateSpec = {
   state: "OR",
   label: "Oregon · licensed venues",
-  socrata: { host: "data.oregon.gov", dataset: "srxe-qkm2", limit: 6000 },
+  priority: "fast",
+  socrata: {
+    host: "data.oregon.gov",
+    dataset: "srxe-qkm2",
+    order: "effective_date DESC",
+    limit: 5000,
+  },
+  healKeywords: "OLCC liquor business licenses",
   map: (rec) => {
     const licNo = clean(rec.license_number);
     if (!licNo) return null;
-    let city: string | null = normalizeCity(rec.city);
-    let zip: string | null = null;
     const addr = clean(rec.physical_address);
+    let zip: string | null = null;
     if (addr) {
       const m = addr.match(/(\d{5})(?:-\d{4})?\s*$/);
       if (m) zip = m[1];
@@ -989,16 +861,16 @@ const OR_LICENSES_SPEC: StateSpec = {
       status: clean(rec.license_expired) === "Yes" ? "Expired" : "Licensed",
       licenseType: clean(rec.license_type),
       typeName: clean(rec.license_type),
-      tradeName: clean(rec.trade_name),
+      tradeName: clean(rec.trade_name) ?? clean(rec.licensee_name),
       ownerName: clean(rec.licensee_name),
       phone: null,
       address: addr,
-      city,
+      city: normalizeCity(rec.city),
       zip,
-      county: clean(rec.county),
+      county: cleanCounty(rec.county),
       filedAt: safeDate(rec.effective_date),
       issuedAt: safeDate(rec.effective_date),
-      expiresAt: safeDate(rec.license_expires),
+      expiresAt: safeDate(rec.license_expires, { allowFutureYears: 10 }),
       lat: null,
       lng: null,
       sourceUrl: "https://data.oregon.gov/d/srxe-qkm2",
@@ -1006,91 +878,122 @@ const OR_LICENSES_SPEC: StateSpec = {
   },
 };
 
-// Master list — add new states here. To set up a new state you only need
-// to (a) find a public data URL, (b) write a `map()` function, (c) add
-// the entry below. The aggregator + email + webpage loop requires
-// no other code changes.
+const OR_NONRENEW_SPEC: StateSpec = {
+  state: "OR",
+  label: "Oregon · non-renewals",
+  priority: "fast",
+  allowEmpty: true,
+  socrata: {
+    host: "data.oregon.gov",
+    dataset: "mhc6-qsxj",
+    order: ":updated_at DESC",
+    limit: 2500,
+  },
+  healKeywords: "OLCC non-renewals",
+  map: (rec) => {
+    const trade = clean(rec.trade_name);
+    const owner = clean(rec.licensee_name);
+    const addr = clean(rec.premises_address);
+    if (!trade && !owner) return null;
+    const exp = safeDate(rec.expiration_date);
+    const key = `OR-X-${(trade ?? owner ?? "unknown")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "")
+      .slice(0, 24)}-${exp?.toISOString().slice(0, 10) ?? "na"}`;
+    let zip: string | null = null;
+    if (addr) {
+      const m = addr.match(/OR\s+(\d{5})/);
+      if (m) zip = m[1];
+    }
+    const city = normalizeCity(rec.local_governing_body);
+    return {
+      state: "OR",
+      key,
+      kind: "active",
+      status: "Expired / Non-Renewed",
+      licenseType: clean(rec.license_type),
+      typeName: clean(rec.license_type),
+      tradeName: trade ?? owner,
+      ownerName: owner,
+      phone: null,
+      address: addr,
+      city,
+      zip,
+      county: cleanCounty(rec.local_governing_body),
+      filedAt: exp,
+      issuedAt: exp,
+      expiresAt: safeDate(rec.expiration_date, { allowFutureYears: 5 }),
+      lat: null,
+      lng: null,
+      sourceUrl: "https://data.oregon.gov/d/mhc6-qsxj",
+    };
+  },
+};
+
+// Master list of all 16 live-verified retail beverage feeds across our 9 honest markets.
+// Zero fake "all 50 states" TTB filler, zero WAF-blocked FL, zero 1-county MD.
 export const ALL_STATE_SOURCES: StateSpec[] = [
   TX_PENDING_SPEC,
+  TX_RELOCATION_SPEC,
   TX_ACTIVE_SPEC,
   NY_PENDING_SPEC,
   NY_ACTIVE_SPEC,
   CA_SPEC,
-  FL_RETAIL_SPEC,
-  NAPA_SPEC,
-  MO_SPEC,
-  MO_ACTIVE_SPEC,
-  CO_SPEC,
-  CO_FULL_SPEC,
-  CT_SPEC,
-  CT_CAFE_SPEC,
-  CT_TAVERN_SPEC,
-  WA_SPEC,
-  WA_APPS_SPEC,
-  CO_CLOSED_SPEC,
   IL_SPEC,
-  MD_SPEC,
+  WA_APPS_SPEC,
+  WA_SPEC,
   OR_APPS_SPEC,
   OR_LICENSES_SPEC,
-  TTB_NEW_SPEC,
-  TTB_WHOLESALER_SPEC,
-  TTB_IMPORTER_SPEC,
-  TTB_SPIRITS_SPEC,
-  TTB_WINE_SPEC,
+  OR_NONRENEW_SPEC,
+  CO_SPEC,
+  CO_CLOSED_SPEC,
+  CT_PERMITS_SPEC,
+  MO_SPEC,
+  MO_ACTIVE_SPEC,
+  MO_CLOSED_SPEC,
 ];
 
-export type StateSourceId = `${string}-${"pending" | "active" | "full"}`;
+export const HEAVY_SOURCE_LABELS = new Set(
+  ALL_STATE_SOURCES.filter((s) => s.priority === "heavy").map((s) => s.label)
+);
 
-type SocrataParams = { where?: string; limit?: number };
+export const COVERED_STATES = Array.from(
+  new Set(ALL_STATE_SOURCES.filter((s) => s.state !== "US").map((s) => s.state))
+);
 
-async function fetchSocrataRows(host: string, dataset: string, params: SocrataParams = {}): Promise<Record<string, unknown>[]> {
-  const url = new URL(`https://${host}/resource/${dataset}.json`);
-  if (params.where) url.searchParams.set("$where", params.where);
-  url.searchParams.set("$limit", String(params.limit ?? 5000));
+// ---------- Low-memory CSV + ZIP fetcher ----------
 
-  const headers: Record<string, string> = {
-    Accept: "application/json",
-    "User-Agent": "pourwatch/1.0 (+public-records-monitor)",
-  };
-  const token = process.env.SOCRATA_APP_TOKEN;
-  if (token) headers["X-App-Token"] = token;
-
-  const res = await fetch(url.toString(), { headers, cache: "no-store" });
-  if (!res.ok) {
-    throw new Error(`Socrata ${host}/${dataset} responded ${res.status}`);
-  }
-  return (await res.json()) as Record<string, unknown>[];
-}
-
-async function fetchGenericCsv(url: string): Promise<Record<string, unknown>[]> {
-  const res = await fetch(url, { cache: "no-store" });
+async function fetchGenericCsvMapped(
+  url: string,
+  mapFn: (rec: Record<string, unknown>) => NormalizedRecord | null
+): Promise<NormalizedRecord[]> {
+  const res = await fetchWithRetry(
+    url,
+    {
+      headers: {
+        "User-Agent": "LastCallLeads-PourWatch/2.0 (+public-records-monitor)",
+        Accept: "text/csv,application/zip,*/*",
+      },
+    },
+    { timeoutMs: 35_000, retries: 1 }
+  );
   if (!res.ok) throw new Error(`CSV ${url} responded ${res.status}`);
   const buf = Buffer.from(await res.arrayBuffer());
-  // Some agencies (California ABC) ship the CSV inside a ZIP — extract it
-  // transparently so the cron never needs manual babysitting.
   let text =
     buf.length > 4 && buf[0] === 0x50 && buf[1] === 0x4b
       ? unzipFirstCsv(buf)
       : buf.toString("utf8");
-  // Strip an agency banner line like "Updated Wednesday 30th of …" so the
-  // real CSV header is always the first row. (Detects it by having no commas
-  // — a header always has commas, a banner line never does.)
+
+  // Strip agency banner line (no commas) before the actual CSV header.
   const nl = text.indexOf("\n");
-  if (
-    nl > 0 &&
-    !text.slice(0, nl).includes(",") &&
-    text.slice(nl + 1).includes(",")
-  ) {
+  if (nl > 0 && !text.slice(0, nl).includes(",") && text.slice(nl + 1).includes(",")) {
     text = text.slice(nl + 1);
   }
-  return parseCsv(text);
+  return parseCsvStreaming(text, mapFn);
 }
 
-// Minimal ZIP reader (stored + deflate entries) using Node's built-in zlib —
-// no extra dependency, works on any standard zip an agency publishes.
 function unzipFirstCsv(buf: Buffer): string {
-  // Locate the end-of-central-directory record.
-  for (let i = buf.length - 22; i >= 0; i--) {
+  for (let i = buf.length - 22; i >= Math.max(0, buf.length - 65_557); i--) {
     if (buf.readUInt32LE(i) !== 0x06054b50) continue;
     const entries = buf.readUInt16LE(i + 10);
     let p = buf.readUInt32LE(i + 16);
@@ -1102,12 +1005,12 @@ function unzipFirstCsv(buf: Buffer): string {
       const extraLen = buf.readUInt16LE(p + 30);
       const commLen = buf.readUInt16LE(p + 32);
       const localOff = buf.readUInt32LE(p + 42);
-      const name = buf.slice(p + 46, p + 46 + nameLen).toString("latin1");
+      const name = buf.subarray(p + 46, p + 46 + nameLen).toString("latin1");
       if (name.toLowerCase().endsWith(".csv")) {
         const lhName = buf.readUInt16LE(localOff + 26);
         const lhExtra = buf.readUInt16LE(localOff + 28);
         const start = localOff + 30 + lhName + lhExtra;
-        const data = buf.slice(start, start + compSize);
+        const data = buf.subarray(start, start + compSize);
         if (method === 0) return data.toString("utf8");
         if (method === 8) return zlib.inflateRawSync(data).toString("utf8");
       }
@@ -1118,11 +1021,35 @@ function unzipFirstCsv(buf: Buffer): string {
   throw new Error("no csv found inside zip");
 }
 
-function parseCsv(csv: string): Record<string, unknown>[] {
-  const rows: string[][] = [];
+// Single-pass CSV parser that maps rows on the fly without retaining a 2D array
+// of 130,000 raw string rows in memory.
+function parseCsvStreaming(
+  csv: string,
+  mapFn: (rec: Record<string, unknown>) => NormalizedRecord | null
+): NormalizedRecord[] {
+  const out: NormalizedRecord[] = [];
+  let header: string[] | null = null;
   let cur: string[] = [];
   let field = "";
   let inQuotes = false;
+
+  const flushRow = () => {
+    if (!field.length && !cur.length) return;
+    cur.push(field);
+    field = "";
+    if (!header) {
+      header = cur.map((h) => h.toLowerCase().trim().replace(/^\uFEFF/, ""));
+    } else {
+      const obj: Record<string, unknown> = {};
+      for (let j = 0; j < header.length; j++) {
+        obj[header[j]] = cur[j] ?? "";
+      }
+      const mapped = mapFn(obj);
+      if (mapped) out.push(mapped);
+    }
+    cur = [];
+  };
+
   for (let i = 0; i < csv.length; i++) {
     const c = csv[i];
     if (inQuotes) {
@@ -1130,35 +1057,25 @@ function parseCsv(csv: string): Record<string, unknown>[] {
         if (csv[i + 1] === '"') {
           field += '"';
           i++;
-        } else inQuotes = false;
-      } else field += c;
-    } else if (c === '"') inQuotes = true;
-    else if (c === ",") {
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        field += c;
+      }
+    } else if (c === '"') {
+      inQuotes = true;
+    } else if (c === ",") {
       cur.push(field);
       field = "";
     } else if (c === "\n" || c === "\r") {
-      if (field.length || cur.length) {
-        cur.push(field);
-        rows.push(cur);
-        cur = [];
-        field = "";
-      }
+      flushRow();
       if (c === "\r" && csv[i + 1] === "\n") i++;
-    } else field += c;
+    } else {
+      field += c;
+    }
   }
-  if (field.length || cur.length) {
-    cur.push(field);
-    rows.push(cur);
-  }
-  if (rows.length < 2) return [];
-  const header = rows[0].map((h) => h.toLowerCase().trim().replace(/^\uFEFF/, ""));
-  const out: Record<string, unknown>[] = [];
-  for (let i = 1; i < rows.length; i++) {
-    const row = rows[i];
-    const obj: Record<string, unknown> = {};
-    for (let j = 0; j < header.length; j++) obj[header[j]] = row[j] ?? "";
-    out.push(obj);
-  }
+  flushRow();
   return out;
 }
 
@@ -1172,6 +1089,8 @@ export type SourceResult = {
   rowsSeen: number;
   newLicenses: number;
   newEvents: number;
+  statusChanges?: number;
+  allowEmpty?: boolean;
   error?: string;
 };
 
@@ -1179,32 +1098,24 @@ export async function runOneSource(
   spec: StateSpec,
   force = false
 ): Promise<SourceResult> {
-  let records: NormalizedRecord[] = [];
+  let rawRecords: NormalizedRecord[] = [];
   try {
     if (spec.socrata) {
-      const params = spec.socrata.where
-        ? { where: spec.socrata.where, limit: spec.socrata.limit ?? 5000 }
-        : { limit: spec.socrata.limit ?? 5000 };
-      // PourWatch may have adopted a replacement dataset for this source.
       const dataset = (await getOverrideDataset(spec.label)) ?? spec.socrata.dataset;
-      const rows = await fetchSocrataRows(spec.socrata.host, dataset, params);
+      const rows = await fetchSocrata(spec.socrata.host, dataset, {
+        where: spec.socrata.where,
+        order: spec.socrata.order,
+        limit: spec.socrata.limit ?? 5000,
+      });
       for (const r of rows) {
         const mapped = spec.map(r);
-        if (mapped) records.push(mapped);
+        if (mapped) rawRecords.push(mapped);
       }
     } else if (spec.fetchUrlFn) {
       const url = await spec.fetchUrlFn();
-      const rows = await fetchGenericCsv(url);
-      for (const r of rows) {
-        const mapped = spec.map(r);
-        if (mapped) records.push(mapped);
-      }
+      rawRecords = await fetchGenericCsvMapped(url, spec.map);
     } else if (spec.fetchUrl) {
-      const rows = await fetchGenericCsv(spec.fetchUrl);
-      for (const r of rows) {
-        const mapped = spec.map(r);
-        if (mapped) records.push(mapped);
-      }
+      rawRecords = await fetchGenericCsvMapped(spec.fetchUrl, spec.map);
     } else {
       return {
         label: spec.label,
@@ -1213,6 +1124,7 @@ export async function runOneSource(
         rowsSeen: 0,
         newLicenses: 0,
         newEvents: 0,
+        allowEmpty: spec.allowEmpty,
         error: "no source url configured",
       };
     }
@@ -1224,12 +1136,18 @@ export async function runOneSource(
       rowsSeen: 0,
       newLicenses: 0,
       newEvents: 0,
+      allowEmpty: spec.allowEmpty,
       error: err instanceof Error ? err.message : String(err),
     };
   }
 
-  // Static registers (TTB lists) must keep a minimum size — if the row count
-  // collapses, the layout or folder changed, and that is a failure, not "ok".
+  // Deduplicate within batch by (state|key) so multi-row sources never clash.
+  const dedup = new Map<string, NormalizedRecord>();
+  for (const r of rawRecords) {
+    dedup.set(`${r.state}|${r.key}`, r);
+  }
+  const records = Array.from(dedup.values());
+
   if (!force && spec.minRows && records.length < spec.minRows) {
     return {
       label: spec.label,
@@ -1238,6 +1156,7 @@ export async function runOneSource(
       rowsSeen: records.length,
       newLicenses: 0,
       newEvents: 0,
+      allowEmpty: spec.allowEmpty,
       error: `only ${records.length} rows parsed (floor ${spec.minRows}) — source layout likely changed`,
     };
   }
@@ -1250,55 +1169,74 @@ export async function runOneSource(
       rowsSeen: 0,
       newLicenses: 0,
       newEvents: 0,
+      allowEmpty: spec.allowEmpty,
     };
   }
 
-  // Persist to database — fully batched so thousands of rows stay fast.
-  let newLicenses = 0;
-  let newEvents = 0;
+  // Check if this source has ever completed before (prevents first-run event flood).
+  const priorOk = await db
+    .select({ id: ingestRuns.id })
+    .from(ingestRuns)
+    .where(and(eq(ingestRuns.source, spec.label), eq(ingestRuns.ok, true)))
+    .limit(1);
+  const isFirstRun = priorOk.length === 0;
 
-  // Which of these keys do we already know about? (batched lookup)
-  const existingSet = new Set<string>();
-  // A national feed (TTB) contributes records across MANY states, so look
-  // up by the states actually present; single-state specs are unaffected.
+  // Batched lookup of existing keys + statuses for status-change detection.
+  const existingMap = new Map<string, string | null>();
   const stateSet = [...new Set(records.map((r) => r.state))];
   for (let i = 0; i < records.length; i += CHUNK) {
     const keys = records.slice(i, i + CHUNK).map((r) => r.key);
     const found = await db
-      .select({ key: licenses.licenseKey })
+      .select({
+        state: licenses.state,
+        key: licenses.licenseKey,
+        status: licenses.status,
+      })
       .from(licenses)
       .where(and(inArray(licenses.state, stateSet), inArray(licenses.licenseKey, keys)));
-    for (const f of found) existingSet.add(f.key);
+    for (const f of found) existingMap.set(`${f.state}|${f.key}`, f.status);
   }
 
-  const cutoff = Date.now() - 30 * DAY_MS;
-  // Licenses: keep the full register (city pages + stats need the history).
-  // Events: only recent ones, because those become subscriber alerts.
+  const now = Date.now();
+  const cutoff30 = now - 30 * DAY_MS;
+  const cutoff14 = now - 14 * DAY_MS;
+
   const toInsert: NormalizedRecord[] = [];
-  const recentOnly: NormalizedRecord[] = [];
+  const recentEvents: NormalizedRecord[] = [];
+  const statusFlips: { rec: NormalizedRecord; prev: string | null }[] = [];
+
   for (const rec of records) {
-    if (existingSet.has(rec.key)) continue;
-    toInsert.push(rec);
-    const when = (rec.filedAt ?? rec.issuedAt ?? rec.expiresAt)?.getTime();
-    if (when === undefined) {
-      // No date at all (e.g. a static register) → treat as current.
-      recentOnly.push(rec);
-    } else if (when >= cutoff) {
-      recentOnly.push(rec);
+    const id = `${rec.state}|${rec.key}`;
+    if (!existingMap.has(id)) {
+      toInsert.push(rec);
+      // Bulk static registers never emit events on first seed; afterwards only
+      // truly new entries (or dated records within 30d) emit events.
+      if (spec.isStaticRegister && isFirstRun) continue;
+      const when = (rec.filedAt ?? rec.issuedAt)?.getTime();
+      if (when === undefined) {
+        if (!isFirstRun && !spec.isStaticRegister) {
+          recentEvents.push(rec);
+        }
+      } else {
+        const minTs = rec.kind === "pending" && isFirstRun ? cutoff14 : cutoff30;
+        if (when >= minTs) {
+          recentEvents.push(rec);
+        }
+      }
+    } else if (!isFirstRun) {
+      const prevStatus = existingMap.get(id) ?? null;
+      const nextStatus = rec.status ?? null;
+      if (prevStatus !== nextStatus && nextStatus) {
+        statusFlips.push({ rec, prev: prevStatus });
+      }
     }
   }
 
-  // ── FAKE-LEADS GUARD ────────────────────────────────────────────────
-  // If a source suddenly reports most of its register as brand-new keys, its
-  // ID format almost certainly changed — customers would get thousands of
-  // phantom "new filings". Block the insert; PourWatch pauses the source.
-  if (!force) {
+  // FAKE-LEADS GUARD: if a source suddenly reports >50% unseen keys after
+  // previously succeeding, its ID format likely mutated — block insert.
+  if (!force && !isFirstRun) {
     const median = await priorMedianRows(spec.label);
-    if (
-      median >= 1000 &&
-      toInsert.length >= 1000 &&
-      toInsert.length > median * 0.5
-    ) {
+    if (median >= 1000 && toInsert.length >= 1000 && toInsert.length > median * 0.5) {
       return {
         label: spec.label,
         state: spec.state,
@@ -1306,11 +1244,13 @@ export async function runOneSource(
         rowsSeen: records.length,
         newLicenses: 0,
         newEvents: 0,
-        error: `ID-format change suspected: ${toInsert.length} unseen keys vs ${median} usual rows — insert BLOCKED to protect customers`,
+        allowEmpty: spec.allowEmpty,
+        error: `ID-format change suspected: ${toInsert.length} unseen keys vs ${median} usual rows — insert BLOCKED`,
       };
     }
   }
 
+  // Insert brand-new licenses in chunks.
   const values = toInsert.map((rec) => ({
     state: rec.state,
     licenseKey: rec.key,
@@ -1331,6 +1271,7 @@ export async function runOneSource(
     lat: rec.lat,
     lng: rec.lng,
     sourceUrl: rec.sourceUrl,
+    lastSeenAt: new Date(),
   }));
 
   for (let i = 0; i < values.length; i += CHUNK) {
@@ -1339,14 +1280,28 @@ export async function runOneSource(
       .values(values.slice(i, i + CHUNK))
       .onConflictDoNothing();
   }
-  newLicenses = values.length;
 
-  // Events: one batched insert per chunk — this is what the digest reads.
-  const eventRows = recentOnly.map((rec) => {
-    const when = rec.filedAt ?? rec.issuedAt ?? rec.expiresAt ?? new Date();
-    // Closing venues (expired/surrendered licenses) are a STATUS_CHANGE, not
-    // a "new license" — the feed badges them as UPDATE.
-    const closing = /expired|surrender/i.test(rec.status ?? "");
+  // Apply real status updates (capped per run so a noisy feed can't stall DB).
+  const appliedFlips = statusFlips.slice(0, 200);
+  for (const { rec } of appliedFlips) {
+    await db
+      .update(licenses)
+      .set({
+        status: rec.status,
+        kind: rec.kind,
+        lastSeenAt: new Date(),
+      })
+      .where(and(eq(licenses.state, rec.state), eq(licenses.licenseKey, rec.key)));
+  }
+
+  // Build events (brand new filings + real status changes).
+  const eventRows: (typeof events.$inferInsert)[] = recentEvents.map((rec) => {
+    const when = rec.filedAt ?? rec.issuedAt ?? new Date();
+    const closing = /expired|surrender|out of business|revoked|non-renew/i.test(
+      rec.status ?? ""
+    );
+    const labelName = rec.tradeName ?? rec.ownerName ?? "New venue";
+    const where = [rec.city ?? rec.county, rec.state].filter(Boolean).join(", ");
     return {
       state: rec.state,
       licenseKey: rec.key,
@@ -1362,73 +1317,175 @@ export async function runOneSource(
       typeName: rec.typeName,
       occurredAt: when,
       summary: closing
-        ? `CLOSING — ${rec.tradeName ?? rec.ownerName ?? "Venue"} · ${rec.city ?? rec.county ?? rec.state} (account up for grabs)`
-        : `${rec.tradeName ?? rec.ownerName ?? "New venue"} · ${rec.city ?? rec.county ?? rec.state}`,
+        ? `CLOSING — ${labelName} (${where}) · account up for grabs`
+        : `${rec.kind === "pending" ? "Application filed" : "License issued"} — ${labelName} (${where})${rec.typeName ? ` · ${rec.typeName}` : ""}`,
+      payload: JSON.stringify({
+        address: rec.address,
+        zip: rec.zip,
+        phone: rec.phone,
+        contactName: rec.contactName ?? null,
+        neighborhood: rec.neighborhood ?? null,
+        mailAddress: rec.mailAddress ?? null,
+        licenseType: rec.licenseType,
+        sourceUrl: rec.sourceUrl,
+      }),
     };
   });
-  for (let i = 0; i < eventRows.length; i += CHUNK) {
-    await db.insert(events).values(eventRows.slice(i, i + CHUNK)).onConflictDoNothing();
+
+  for (const { rec, prev } of appliedFlips) {
+    const labelName = rec.tradeName ?? rec.ownerName ?? "Venue";
+    const where = [rec.city ?? rec.county, rec.state].filter(Boolean).join(", ");
+    eventRows.push({
+      state: rec.state,
+      licenseKey: rec.key,
+      eventType: "STATUS_CHANGE",
+      tradeName: rec.tradeName,
+      ownerName: rec.ownerName,
+      city: rec.city,
+      county: rec.county,
+      typeName: rec.typeName,
+      occurredAt: new Date(),
+      summary: `Status changed to ${rec.status} — ${labelName} (${where})`,
+      payload: JSON.stringify({
+        prev,
+        next: rec.status,
+        address: rec.address,
+        zip: rec.zip,
+        phone: rec.phone,
+        contactName: rec.contactName ?? null,
+        neighborhood: rec.neighborhood ?? null,
+        mailAddress: rec.mailAddress ?? null,
+        licenseType: rec.licenseType,
+        sourceUrl: rec.sourceUrl,
+      }),
+    });
   }
-  newEvents = eventRows.length;
+
+  for (let i = 0; i < eventRows.length; i += CHUNK) {
+    await db
+      .insert(events)
+      .values(eventRows.slice(i, i + CHUNK))
+      .onConflictDoNothing();
+  }
 
   return {
     label: spec.label,
     state: spec.state,
     ok: true,
     rowsSeen: records.length,
-    newLicenses,
-    newEvents,
+    newLicenses: values.length,
+    newEvents: eventRows.length,
+    statusChanges: appliedFlips.length,
+    allowEmpty: spec.allowEmpty,
   };
 }
 
-// Runs the given specs: paused sources are skipped (unless force), each
-// result is recorded to PourWatch (ingest_runs + source_health + alerts).
-export async function runSpecs(specs: StateSpec[], force = false): Promise<{
+// Bounded-concurrency runner (4 at a time instead of 26 simultaneously) with
+// optional time budget so serverless crons never hit a hard 504 wall.
+export async function runSpecs(
+  specs: StateSpec[],
+  opts: { force?: boolean; concurrency?: number; budgetMs?: number } = {}
+): Promise<{
   results: SourceResult[];
   skipped: string[];
+  deferred: string[];
 }> {
+  const force = opts.force ?? false;
+  const concurrency = Math.max(1, Math.min(opts.concurrency ?? 4, 8));
+  const deadline = opts.budgetMs ? Date.now() + opts.budgetMs : null;
+
   await ensureSchema();
   const health = await getHealthMap();
-  const run: StateSpec[] = [];
+  const queue: StateSpec[] = [];
   const skipped: string[] = [];
   for (const spec of specs) {
     const h = health.get(spec.label);
     if (!force && h?.status === "paused") skipped.push(spec.label);
-    else run.push(spec);
+    else queue.push(spec);
   }
-  // Sources are independent, so they run in parallel — the big CSV/zip
-  // downloads (CA ~7MB, FL ~14MB) overlap and the whole sweep stays well
-  // inside serverless time limits.
-  const results = await Promise.all(run.map((spec) => runOneSource(spec, force)));
-  for (const r of results) {
-    try {
-      await recordRunResult(r);
-    } catch {
-      // PourWatch must never break an ingest
-    }
-  }
-  return { results, skipped };
+
+  const results: SourceResult[] = [];
+  const deferred: string[] = [];
+  let cursor = 0;
+
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, queue.length) }, async () => {
+      while (cursor < queue.length) {
+        const spec = queue[cursor++];
+        if (deadline && Date.now() > deadline) {
+          deferred.push(spec.label);
+          continue;
+        }
+        const r = await runOneSource(spec, force);
+        results.push(r);
+        try {
+          await recordRunResult(r);
+        } catch {
+          // PourWatch logging must never break an ingest sweep
+        }
+      }
+    })
+  );
+
+  return { results, skipped, deferred };
 }
 
-export async function runAllSources(force = false): Promise<{
-  results: SourceResult[];
-  skipped: string[];
-}> {
-  return runSpecs(ALL_STATE_SOURCES, force);
+export async function runAllSources(
+  force = false,
+  opts: { tier?: "fast" | "heavy" | "all"; budgetMs?: number; concurrency?: number } = {}
+) {
+  const tier = opts.tier ?? "all";
+  const selected =
+    tier === "all"
+      ? ALL_STATE_SOURCES
+      : ALL_STATE_SOURCES.filter((s) => (s.priority ?? "fast") === tier);
+  return runSpecs(selected, {
+    force,
+    budgetMs: opts.budgetMs,
+    concurrency: opts.concurrency,
+  });
 }
 
-export async function runByState(
-  state: string,
-  force = false
-): Promise<{ results: SourceResult[]; skipped: string[] }> {
+export async function runByState(state: string, force = false) {
   const wanted = state.trim().toUpperCase();
   return runSpecs(
     ALL_STATE_SOURCES.filter((spec) => spec.state === wanted),
-    force
+    { force }
   );
 }
 
-// All states we currently cover — used by the API + dashboard.
-export const COVERED_STATES = Array.from(
-  new Set(ALL_STATE_SOURCES.map((s) => s.state))
-);
+/** Re-probe paused sources (and attempt Socrata catalog self-healing when broken). */
+export async function reprobeAndHealPaused(reprobeAll = false) {
+  await ensureSchema();
+  const paused = await reprobeDue(reprobeAll);
+  const pausedLabels = new Set(paused.map((p) => p.source));
+  const targets = ALL_STATE_SOURCES.filter((s) => pausedLabels.has(s.label));
+  const reprobed: {
+    label: string;
+    ok: boolean;
+    rows: number;
+    error?: string;
+    selfHealed?: string;
+  }[] = [];
+
+  for (const spec of targets) {
+    let r = await runOneSource(spec, true);
+    let selfHealed: string | undefined;
+    if (!r.ok && spec.socrata) {
+      const heal = await autoHealSource(spec);
+      if (heal.healed) {
+        selfHealed = heal.detail;
+        r = await runOneSource(spec, true);
+      }
+    }
+    await recordRunResult(r);
+    reprobed.push({
+      label: r.label,
+      ok: r.ok,
+      rows: r.rowsSeen,
+      ...(r.error ? { error: r.error } : {}),
+      ...(selfHealed ? { selfHealed } : {}),
+    });
+  }
+  return reprobed;
+}

@@ -1,4 +1,4 @@
-// Shared plumbing for talking to state open-data portals (Socrata APIs).
+// Shared plumbing for talking to state open-data portals (Socrata + CSV APIs).
 
 export type NormalizedRecord = {
   state: string;
@@ -9,8 +9,11 @@ export type NormalizedRecord = {
   typeName: string | null;
   tradeName: string | null;
   ownerName: string | null;
+  contactName?: string | null; // permittee / designated signee / human contact when published
   phone: string | null;
   address: string | null;
+  mailAddress?: string | null;
+  neighborhood?: string | null;
   city: string | null;
   zip: string | null;
   county: string | null;
@@ -22,12 +25,45 @@ export type NormalizedRecord = {
   sourceUrl: string;
 };
 
-type SocrataParams = {
+export type SocrataParams = {
   where?: string;
   order?: string;
   limit: number;
+  offset?: number;
   select?: string;
+  timeoutMs?: number;
 };
+
+const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
+
+export async function fetchWithRetry(
+  url: string,
+  init: RequestInit = {},
+  opts: { timeoutMs?: number; retries?: number } = {}
+): Promise<Response> {
+  const timeoutMs = opts.timeoutMs ?? 20_000;
+  const retries = opts.retries ?? 1;
+  let lastErr: unknown;
+
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch(url, {
+        ...init,
+        cache: "no-store",
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      if (res.ok || !RETRYABLE_STATUS.has(res.status) || attempt === retries) {
+        return res;
+      }
+      await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
+    } catch (err) {
+      lastErr = err;
+      if (attempt === retries) throw err;
+      await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+}
 
 export async function fetchSocrata(
   host: string,
@@ -38,29 +74,38 @@ export async function fetchSocrata(
   if (params.where) url.searchParams.set("$where", params.where);
   if (params.order) url.searchParams.set("$order", params.order);
   if (params.select) url.searchParams.set("$select", params.select);
+  if (params.offset) url.searchParams.set("$offset", String(params.offset));
   url.searchParams.set("$limit", String(params.limit));
 
   const headers: Record<string, string> = {
     Accept: "application/json",
-    "User-Agent": "pourwatch/1.0 (+public-records-monitor)",
+    "User-Agent": "LastCallLeads-PourWatch/2.0 (+public-records-monitor)",
   };
   const token = process.env.SOCRATA_APP_TOKEN;
   if (token) headers["X-App-Token"] = token;
 
-  const res = await fetch(url.toString(), { headers, cache: "no-store" });
+  const res = await fetchWithRetry(
+    url.toString(),
+    { headers },
+    { timeoutMs: params.timeoutMs ?? 22_000, retries: 1 }
+  );
   if (!res.ok) {
     throw new Error(`Socrata ${host}/${resource} responded ${res.status}`);
   }
-  return (await res.json()) as Record<string, unknown>[];
+  const json = await res.json();
+  if (!Array.isArray(json)) {
+    throw new Error(`Socrata ${host}/${resource} returned non-array payload`);
+  }
+  return json as Record<string, unknown>[];
 }
 
 export function clean(value: unknown): string | null {
   if (value === null || value === undefined) return null;
-  const s = String(value).trim();
+  const s = String(value).replace(/\s+/g, " ").trim();
   return s.length ? s : null;
 }
 
-// Fixes duplicate cities caused by inconsistent casing across source feeds
+// Normalizes inconsistent casing across source feeds
 // ("HOUSTON" vs "Houston" vs "houston" all become "Houston").
 export function normalizeCity(value: unknown): string | null {
   const s = clean(value);
@@ -70,24 +115,45 @@ export function normalizeCity(value: unknown): string | null {
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-export function safeDate(value: unknown): Date | null {
+// Normalizes counties ("TRAVIS COUNTY", "TRAVIS", "travis" -> "Travis").
+export function cleanCounty(value: unknown): string | null {
   const s = clean(value);
   if (!s) return null;
-  const d = new Date(s);
+  const stripped = s.replace(/\s+county$/i, "").trim();
+  return stripped ? normalizeCity(stripped) : null;
+}
+
+export function safeDate(
+  value: unknown,
+  opts: { allowFutureYears?: number } = {}
+): Date | null {
+  const s = clean(value);
+  if (!s) return null;
+  // Support compact YYYYMMDD (e.g. WA LCB applicationdate "20261120")
+  const normalized = /^\d{8}$/.test(s)
+    ? `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}T00:00:00Z`
+    : s;
+  const d = new Date(normalized);
   if (Number.isNaN(d.getTime())) return null;
-  // Guard against registry typos — Colorado's feed, for example, ships
-  // issue dates like "2262-04-01". Anything before 1990 or more than a
-  // year out is treated as corrupt, not as a real filing date.
   const y = d.getFullYear();
-  const maxYear = new Date().getFullYear() + 1;
-  if (y < 1990 || y > maxYear) return null;
+  if (y < 1990) return null;
+  if (opts.allowFutureYears && opts.allowFutureYears > 0) {
+    const maxYear = new Date().getFullYear() + opts.allowFutureYears;
+    if (y > maxYear) return null;
+  } else {
+    // Filing / issue dates shouldn't be more than 7 days in the future
+    // (guards against registry typos like Colorado's "2262-04-01" or future effective dates).
+    const maxMs = Date.now() + 7 * 86_400_000;
+    if (d.getTime() > maxMs) return null;
+  }
   return d;
 }
 
 export function cleanZip(value: unknown): string | null {
   const s = clean(value);
   if (!s) return null;
-  return s.slice(0, 5) || s;
+  const m = s.match(/\d{5}/);
+  return m ? m[0] : s.slice(0, 5) || null;
 }
 
 export function cleanNumberId(value: unknown): string | null {
@@ -95,4 +161,10 @@ export function cleanNumberId(value: unknown): string | null {
   if (!s) return null;
   // Socrata sometimes ships ids as "2100002125.0"
   return s.replace(/\.0$/, "");
+}
+
+export function safeCoord(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) && Math.abs(n) > 0.001 && Math.abs(n) <= 180 ? n : null;
 }

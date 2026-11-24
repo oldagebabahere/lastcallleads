@@ -1,21 +1,14 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { gsap } from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import Lenis from "lenis";
 
 /* ==========================================================================
-   VESPER STAGE — GSAP ScrollTrigger edition, 10/10 build
-   ONE bottle pinned dead-centre; the acts travel past behind it.
-
-   Engines in this file:
-     1. Preloader      — brand mark + 0→100 counter, curtain lift
-     2. Pose chain     — scrubbed rotation/scale/y across 5 acts (dock on $129)
-     3. Velocity tilt  — the bottle leans into your scroll, like a real object
-     4. Word reveals   — headlines rise word-by-word as they enter
-     5. Parallax       — act panels drift at a different speed
-     6. Magnetic CTAs  — buttons reach toward the cursor (desktop)
+   VESPER STAGE — Smooth, instant-paint GSAP ScrollTrigger choreography
+   (Zero blocking preloader, zero direct React DOM deletion/mutation,
+   proper event cleanup, live Act Rail indicator).
    ========================================================================== */
 
 gsap.registerPlugin(ScrollTrigger);
@@ -26,7 +19,7 @@ const ACTS = [
   { id: "act-machine", label: "Machine" },
   { id: "act-signals", label: "Signals" },
   { id: "act-allocation", label: "Allocation" },
-];
+] as const;
 
 const CHAIN: {
   trigger: string;
@@ -43,264 +36,271 @@ const CHAIN: {
 export default function BottleStage() {
   const imgRef = useRef<HTMLImageElement>(null);
   const tiltRef = useRef<HTMLDivElement>(null);
-  const preRef = useRef<HTMLDivElement>(null);
-  const counterRef = useRef<HTMLSpanElement>(null);
   const glassRef = useRef<HTMLDivElement>(null);
   const streamRef = useRef<HTMLDivElement>(null);
   const liquidRef = useRef<HTMLDivElement>(null);
   const lenisRef = useRef<Lenis | null>(null);
+  const [activeAct, setActiveAct] = useState<string>("act-hero");
 
   useEffect(() => {
     const img = imgRef.current;
     if (!img) return;
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const isDesktop = window.matchMedia("(min-width: 1024px)").matches;
 
-    /* ---------- 1. PRELOADER ---------- */
-    const pre = preRef.current;
-    if (reduce || !pre) {
-      pre?.remove();
-      document.body.classList.add("loaded");
-      document.body.classList.remove("intro-lock");
-    } else {
-      document.body.classList.add("intro-lock");
-      document.body.classList.remove("loaded");
-      const tl = gsap.timeline({ delay: 0.15 });
-      tl.to(counterRef.current, {
-        textContent: 100,
-        duration: 0.85,
-        snap: { textContent: 1 },
-        ease: "power2.inOut",
-      })
-        .add(() => {
-          document.body.classList.add("loaded");
-          document.body.classList.remove("intro-lock");
-        })
-        .to(pre, { yPercent: -100, duration: 0.85, ease: "expo.inOut" }, "+=0.12")
-        .add(() => {
-          pre.remove();
-          ScrollTrigger.refresh();
-        });
-    }
+    document.body.classList.add("loaded");
+    document.body.classList.remove("intro-lock");
 
-    /* ---------- Lenis: butter scroll on GSAP's ticker ---------- */
-    const lenis = new Lenis({ duration: 1.1, smoothWheel: true });
-    lenisRef.current = lenis;
+    // Lenis smooth scroll on desktop only (mobile native touch scroll stays snappy).
+    let lenis: Lenis | null = null;
+    let raf: ((time: number) => void) | null = null;
+    let tiltTick: (() => void) | null = null;
 
-    /* ---------- 3. VELOCITY TILT (composed on the wrapper) ---------- */
-    let vt = 0;
-    let vtTarget = 0;
-    lenis.on("scroll", (e: { velocity?: number }) => {
-      ScrollTrigger.update();
-      vtTarget = gsap.utils.clamp(-6, 6, (e.velocity ?? 0) * 0.075);
-    });
-    const tiltTick = () => {
-      vt += (vtTarget - vt) * 0.08;
-      vtTarget *= 0.9;
-      if (tiltRef.current) {
-        tiltRef.current.style.transform = `rotate(${vt.toFixed(3)}deg)`;
-      }
-    };
-    gsap.ticker.add(tiltTick);
+    if (!reduce && isDesktop) {
+      lenis = new Lenis({ duration: 1.05, smoothWheel: true });
+      lenisRef.current = lenis;
 
-    const raf = (time: number) => lenis.raf(time * 1000);
-    gsap.ticker.add(raf);
-    gsap.ticker.lagSmoothing(0);
-    document.documentElement.style.scrollBehavior = "auto";
-
-    if (reduce) {
-      gsap.set(img, { opacity: 0 });
-      return () => {
-        gsap.ticker.remove(raf);
-        gsap.ticker.remove(tiltTick);
-        lenis.destroy();
-        document.documentElement.style.scrollBehavior = "";
+      let vt = 0;
+      let vtTarget = 0;
+      lenis.on("scroll", (e: { velocity?: number }) => {
+        ScrollTrigger.update();
+        vtTarget = gsap.utils.clamp(-5, 5, (e.velocity ?? 0) * 0.065);
+      });
+      tiltTick = () => {
+        vt += (vtTarget - vt) * 0.08;
+        vtTarget *= 0.9;
+        if (tiltRef.current) {
+          tiltRef.current.style.transform = `rotate(${vt.toFixed(3)}deg)`;
+        }
       };
+      raf = (time: number) => lenis!.raf(time * 1000);
+      gsap.ticker.add(tiltTick);
+      gsap.ticker.add(raf);
+      gsap.ticker.lagSmoothing(0);
+      document.documentElement.style.scrollBehavior = "auto";
     }
 
-    document.body.dataset.vesper = "on";
+    const triggers: ScrollTrigger[] = [];
+    const cleanups: (() => void)[] = [];
 
-    /* ---------- dock targets ---------- */
-    const dockScale = () => {
-      const s = document.getElementById("dock-slot");
-      if (!s) return 0.5;
-      return Math.min(
-        (s.clientWidth * 0.78) / img.offsetWidth,
-        (s.clientHeight * 0.84) / img.offsetHeight,
-        1
-      );
-    };
-    const dockY = () => {
-      const s = document.getElementById("dock-slot");
-      const sec = document.getElementById("act-allocation");
-      if (!s || !sec) return 240;
-      const sr = s.getBoundingClientRect();
-      const cr = sec.getBoundingClientRect();
-      return (
-        sr.top + window.scrollY + sr.height / 2 - (cr.top + window.scrollY + cr.height / 2)
-      );
-    };
+    if (reduce || !isDesktop) {
+      gsap.set(img, { opacity: 0 });
+    } else {
+      document.body.dataset.vesper = "on";
 
-    /* ---------- 2. POSE CHAIN ---------- */
-    gsap.set(img, { rotation: 0, scale: 1, y: 0 });
-    let prev = { rotation: 0, scale: 1, y: 0 };
-    for (const step of CHAIN) {
-      const isDock = step.trigger === "#act-allocation";
-      gsap.fromTo(
-        img,
-        { ...prev },
-        {
+      // Active act rail tracking
+      for (const act of ACTS) {
+        const el = document.getElementById(act.id);
+        if (!el) continue;
+        triggers.push(
+          ScrollTrigger.create({
+            trigger: el,
+            start: "top center",
+            end: "bottom center",
+            onEnter: () => setActiveAct(act.id),
+            onEnterBack: () => setActiveAct(act.id),
+          })
+        );
+      }
+
+      const dockScale = () => {
+        const s = document.getElementById("dock-slot");
+        if (!s || !img.offsetWidth || !img.offsetHeight) return 0.5;
+        return Math.min(
+          (s.clientWidth * 0.78) / img.offsetWidth,
+          (s.clientHeight * 0.84) / img.offsetHeight,
+          1
+        );
+      };
+      const dockY = () => {
+        const s = document.getElementById("dock-slot");
+        const sec = document.getElementById("act-allocation");
+        if (!s || !sec) return 240;
+        const sr = s.getBoundingClientRect();
+        const cr = sec.getBoundingClientRect();
+        return (
+          sr.top +
+          window.scrollY +
+          sr.height / 2 -
+          (cr.top + window.scrollY + cr.height / 2)
+        );
+      };
+
+      gsap.set(img, { rotation: 0, scale: 1, y: 0, opacity: 1 });
+      let prev = { rotation: 0, scale: 1, y: 0 };
+      for (const step of CHAIN) {
+        const isDock = step.trigger === "#act-allocation";
+        const tween = gsap.fromTo(
+          img,
+          { ...prev },
+          {
+            rotation: step.rotation,
+            scale: step.scale ?? dockScale,
+            y: step.y ?? dockY,
+            ease: "none",
+            immediateRender: false,
+            scrollTrigger: {
+              trigger: step.trigger,
+              start: "top bottom",
+              end: isDock ? "center center" : "top 30%",
+              scrub: true,
+              invalidateOnRefresh: true,
+            },
+          }
+        );
+        if (tween.scrollTrigger) triggers.push(tween.scrollTrigger);
+        prev = {
           rotation: step.rotation,
-          scale: step.scale ?? dockScale,
-          y: step.y ?? dockY,
+          scale: step.scale ?? dockScale(),
+          y: step.y ?? dockY(),
+        };
+      }
+
+      const slot = document.getElementById("slot-bottle");
+      const fadeOut = gsap.fromTo(
+        img,
+        { opacity: 1 },
+        {
+          opacity: 0,
           ease: "none",
           immediateRender: false,
           scrollTrigger: {
-            trigger: step.trigger,
-            start: "top bottom",
-            end: isDock ? "center center" : "top 30%",
+            trigger: "#act-allocation",
+            start: "42% center",
+            end: "58% center",
             scrub: true,
-            invalidateOnRefresh: true,
           },
         }
       );
-      prev = { rotation: step.rotation, scale: step.scale ?? dockScale(), y: step.y ?? dockY() };
-    }
+      if (fadeOut.scrollTrigger) triggers.push(fadeOut.scrollTrigger);
 
-    /* dock cross-fade */
-    const slot = document.getElementById("slot-bottle");
-    gsap.fromTo(
-      img,
-      { opacity: 1 },
-      {
-        opacity: 0,
-        ease: "none",
-        immediateRender: false,
-        scrollTrigger: { trigger: "#act-allocation", start: "42% center", end: "58% center", scrub: true },
+      if (slot) {
+        const fadeIn = gsap.fromTo(
+          slot,
+          { opacity: 0, scale: 0.9 },
+          {
+            opacity: 1,
+            scale: 1,
+            ease: "none",
+            immediateRender: false,
+            scrollTrigger: {
+              trigger: "#act-allocation",
+              start: "42% center",
+              end: "58% center",
+              scrub: true,
+            },
+          }
+        );
+        if (fadeIn.scrollTrigger) triggers.push(fadeIn.scrollTrigger);
       }
-    );
-    if (slot) {
-      gsap.fromTo(
-        slot,
-        { opacity: 0, scale: 0.9 },
-        {
-          opacity: 1,
-          scale: 1,
+
+      // React-safe headline reveals (no DOM node splitting/mutation!)
+      document.querySelectorAll<HTMLElement>("[data-split]").forEach((el) => {
+        const t = gsap.fromTo(
+          el,
+          { y: 24, opacity: 0 },
+          {
+            y: 0,
+            opacity: 1,
+            duration: 0.85,
+            ease: "power3.out",
+            scrollTrigger: { trigger: el, start: "top 88%", once: true },
+          }
+        );
+        if (t.scrollTrigger) triggers.push(t.scrollTrigger);
+      });
+
+      // Act 4 wine pour
+      const glass = glassRef.current;
+      const stream = streamRef.current;
+      const liquid = liquidRef.current;
+      if (glass && stream && liquid) {
+        const pour = gsap.timeline({
+          scrollTrigger: {
+            trigger: "#act-signals",
+            start: "top 75%",
+            end: "center 42%",
+            scrub: true,
+          },
+        });
+        pour
+          .fromTo(
+            glass,
+            { opacity: 0, y: 46, scale: 0.9 },
+            { opacity: 1, y: 0, scale: 1, duration: 0.28, ease: "none" },
+            0
+          )
+          .fromTo(stream, { scaleY: 0 }, { scaleY: 1, duration: 0.2, ease: "none" }, 0.22)
+          .fromTo(liquid, { height: "0%" }, { height: "58%", duration: 0.62, ease: "none" }, 0.3)
+          .to(stream, { opacity: 0, duration: 0.16, ease: "none" }, 0.84);
+        if (pour.scrollTrigger) triggers.push(pour.scrollTrigger);
+
+        const glassExit = gsap.to(glass, {
+          opacity: 0,
+          y: 40,
           ease: "none",
           immediateRender: false,
-          scrollTrigger: { trigger: "#act-allocation", start: "42% center", end: "58% center", scrub: true },
-        }
-      );
-    }
-
-    /* ---------- 4. WORD REVEALS ---------- */
-    const splitDone: HTMLElement[] = [];
-    document.querySelectorAll<HTMLElement>("[data-split]").forEach((el) => {
-      const walk = (node: HTMLElement) => {
-        [...node.childNodes].forEach((child) => {
-          if (child.nodeType === 3) {
-            const frag = document.createDocumentFragment();
-            (child.textContent ?? "").split(/(\s+)/).forEach((part) => {
-              if (!part) return;
-              if (/^\s+$/.test(part)) {
-                frag.append(document.createTextNode(" "));
-                return;
-              }
-              const w = document.createElement("span");
-              w.className = "sw";
-              const wi = document.createElement("span");
-              wi.className = "swi";
-              wi.textContent = part;
-              w.append(wi);
-              frag.append(w);
-            });
-            child.replaceWith(frag);
-          } else if (child.nodeType === 1 && !(child as HTMLElement).classList.contains("sw")) {
-            walk(child as HTMLElement);
-          }
+          scrollTrigger: {
+            trigger: "#act-allocation",
+            start: "top bottom",
+            end: "top 55%",
+            scrub: true,
+          },
         });
-      };
-      walk(el);
-      splitDone.push(el);
-      gsap.fromTo(
-        el.querySelectorAll(".swi"),
-        { yPercent: 115 },
-        {
-          yPercent: 0,
-          duration: 1.05,
-          ease: "power4.out",
-          stagger: 0.032,
-          scrollTrigger: { trigger: el, start: "top 86%" },
-        }
-      );
-    });
+        if (glassExit.scrollTrigger) triggers.push(glassExit.scrollTrigger);
+      }
 
-    /* ---------- 4b. THE POUR — Act 4: the inverted bottle fills a glass ---------- */
-    const glass = glassRef.current;
-    const stream = streamRef.current;
-    const liquid = liquidRef.current;
-    if (glass && stream && liquid) {
-      const pour = gsap.timeline({
-        scrollTrigger: {
-          trigger: "#act-signals",
-          start: "top 75%",
-          end: "center 42%",
-          scrub: true,
-        },
+      // Subtle parallax
+      document.querySelectorAll<HTMLElement>(".parallax").forEach((el) => {
+        const depth = el.classList.contains("parallax-soft") ? 4 : 7;
+        const t = gsap.fromTo(
+          el,
+          { yPercent: depth },
+          {
+            yPercent: -depth,
+            ease: "none",
+            scrollTrigger: {
+              trigger: el,
+              start: "top bottom",
+              end: "bottom top",
+              scrub: true,
+            },
+          }
+        );
+        if (t.scrollTrigger) triggers.push(t.scrollTrigger);
       });
-      pour
-        .fromTo(glass, { opacity: 0, y: 46, scale: 0.9 }, { opacity: 1, y: 0, scale: 1, duration: 0.28, ease: "none" }, 0)
-        .fromTo(stream, { scaleY: 0 }, { scaleY: 1, duration: 0.2, ease: "none" }, 0.22)
-        .fromTo(liquid, { height: "0%" }, { height: "58%", duration: 0.62, ease: "none" }, 0.3)
-        .to(stream, { opacity: 0, duration: 0.16, ease: "none" }, 0.84);
 
-      // leaving Act 4 → the filled glass drifts away
-      gsap.to(glass, {
-        opacity: 0,
-        y: 40,
-        ease: "none",
-        immediateRender: false,
-        scrollTrigger: { trigger: "#act-allocation", start: "top bottom", end: "top 55%", scrub: true },
-      });
-    }
-
-    /* ---------- 5. PARALLAX ---------- */
-    document.querySelectorAll<HTMLElement>(".parallax").forEach((el) => {
-      const depth = el.classList.contains("parallax-soft") ? 4 : 8;
-      gsap.fromTo(
-        el,
-        { yPercent: depth },
-        {
-          yPercent: -depth,
-          ease: "none",
-          scrollTrigger: { trigger: el, start: "top bottom", end: "bottom top", scrub: true },
-        }
-      );
-    });
-
-    /* ---------- 6. MAGNETIC CTAs ---------- */
-    if (window.matchMedia("(pointer:fine)").matches) {
-      document.querySelectorAll<HTMLElement>(".magnetic").forEach((btn) => {
-        const xTo = gsap.quickTo(btn, "x", { duration: 0.5, ease: "power3" });
-        const yTo = gsap.quickTo(btn, "y", { duration: 0.5, ease: "power3" });
-        const move = (e: PointerEvent) => {
-          const r = btn.getBoundingClientRect();
-          xTo((e.clientX - r.left - r.width / 2) * 0.24);
-          yTo((e.clientY - r.top - r.height / 2) * 0.24);
-        };
-        const leave = () => {
-          xTo(0);
-          yTo(0);
-        };
-        btn.addEventListener("pointermove", move);
-        btn.addEventListener("pointerleave", leave);
-      });
+      // Magnetic CTAs with proper listener teardown
+      if (window.matchMedia("(pointer:fine)").matches) {
+        document.querySelectorAll<HTMLElement>(".magnetic").forEach((btn) => {
+          const xTo = gsap.quickTo(btn, "x", { duration: 0.45, ease: "power3" });
+          const yTo = gsap.quickTo(btn, "y", { duration: 0.45, ease: "power3" });
+          const move = (e: PointerEvent) => {
+            const r = btn.getBoundingClientRect();
+            xTo((e.clientX - r.left - r.width / 2) * 0.2);
+            yTo((e.clientY - r.top - r.height / 2) * 0.2);
+          };
+          const leave = () => {
+            xTo(0);
+            yTo(0);
+          };
+          btn.addEventListener("pointermove", move);
+          btn.addEventListener("pointerleave", leave);
+          cleanups.push(() => {
+            btn.removeEventListener("pointermove", move);
+            btn.removeEventListener("pointerleave", leave);
+          });
+        });
+      }
     }
 
     return () => {
-      ScrollTrigger.getAll().forEach((t) => t.kill());
-      gsap.ticker.remove(raf);
-      gsap.ticker.remove(tiltTick);
-      lenis.destroy();
+      triggers.forEach((t) => t.kill());
+      cleanups.forEach((fn) => fn());
+      if (raf) gsap.ticker.remove(raf);
+      if (tiltTick) gsap.ticker.remove(tiltTick);
+      lenis?.destroy();
+      lenisRef.current = null;
       document.documentElement.style.scrollBehavior = "";
       delete document.body.dataset.vesper;
     };
@@ -308,56 +308,61 @@ export default function BottleStage() {
 
   const go = (e: React.MouseEvent<HTMLAnchorElement>, id: string) => {
     e.preventDefault();
-    lenisRef.current?.scrollTo(`#${id}`, { offset: 0 });
+    if (lenisRef.current) {
+      lenisRef.current.scrollTo(`#${id}`, { offset: 0 });
+    } else {
+      document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
+    }
   };
 
   return (
     <>
-      {/* ---------- preloader ---------- */}
-      <div ref={preRef} className="preloader" aria-hidden="true">
-        <div className="text-center">
-          <p className="font-mono text-[10px] tracking-[0.34em] text-cream/60">LAST CALL LEADS</p>
-          <p className="mt-4 font-display text-7xl font-light text-cream">
-            <span ref={counterRef}>0</span>
-            <span className="text-cream/40">%</span>
-          </p>
-          <p className="mt-4 font-mono text-[9px] tracking-[0.3em] text-cream/40">
-            POURING THE MORNING REPORT
-          </p>
-          <span className="mx-auto mt-6 block h-px w-24 bg-cream/20" />
-        </div>
-      </div>
-
-      {/* act rail */}
+      {/* Left act navigation rail (desktop only) */}
       <nav
         aria-label="Story acts"
         className="fixed left-5 top-1/2 z-40 hidden -translate-y-1/2 flex-col gap-3.5 xl:flex"
       >
-        {ACTS.map((a) => (
-          <a key={a.id} href={`#${a.id}`} onClick={(e) => go(e, a.id)} className="group flex items-center gap-3">
-            <span className="rail-chip h-px w-5 bg-cream/40 transition-all duration-500 [.on&]:w-9 [.on&]:bg-amber" />
-            <span className="rail-chip rounded-full px-2.5 py-1 font-mono text-[9px] tracking-[0.24em] text-cream/70 transition-colors duration-500 group-hover:text-cream [.on&]:text-amber">
-              {a.label.toUpperCase()}
-            </span>
-          </a>
-        ))}
+        {ACTS.map((a) => {
+          const isOn = activeAct === a.id;
+          return (
+            <a
+              key={a.id}
+              href={`#${a.id}`}
+              onClick={(e) => go(e, a.id)}
+              className={`group flex items-center gap-3 ${isOn ? "on" : ""}`}
+            >
+              <span
+                className={`rail-chip h-px transition-all duration-500 ${
+                  isOn ? "w-9 bg-amber" : "w-5 bg-cream/40"
+                }`}
+              />
+              <span
+                className={`rail-chip rounded-full px-2.5 py-1 font-mono text-[9px] tracking-[0.24em] transition-colors duration-500 ${
+                  isOn ? "text-amber" : "text-cream/70 group-hover:text-cream"
+                }`}
+              >
+                {a.label.toUpperCase()}
+              </span>
+            </a>
+          );
+        })}
       </nav>
 
-      {/* warm glow bed under the bottle */}
+      {/* Warm glow bed under the pinned bottle (desktop only) */}
       <div
         aria-hidden="true"
-        className="pointer-events-none fixed left-1/2 top-1/2 z-30 h-[52vh] w-[52vh] -translate-x-1/2 -translate-y-1/2 rounded-full"
+        className="pointer-events-none fixed left-1/2 top-1/2 z-30 hidden h-[52vh] w-[52vh] -translate-x-1/2 -translate-y-1/2 rounded-full lg:block"
         style={{
           background:
-            "radial-gradient(closest-side, rgba(224,170,74,0.2), rgba(164,67,90,0.1) 55%, transparent 75%)",
+            "radial-gradient(closest-side, rgba(224,170,74,0.18), rgba(164,67,90,0.09) 55%, transparent 75%)",
         }}
       />
 
-      {/* THE model — wrapper carries scroll-velocity tilt, img carries the pose */}
+      {/* Pinned bottle (desktop only so mobile text is never obscured) */}
       <div
         ref={tiltRef}
         aria-hidden="true"
-        className="pointer-events-none fixed left-1/2 top-1/2 z-40 -translate-x-1/2 -translate-y-1/2 will-change-transform"
+        className="pointer-events-none fixed left-1/2 top-1/2 z-40 hidden -translate-x-1/2 -translate-y-1/2 will-change-transform lg:block"
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
@@ -368,25 +373,29 @@ export default function BottleStage() {
           height={1200}
           draggable={false}
           onLoad={() => ScrollTrigger.refresh()}
-          className="bottle-fixed h-[56vh] max-h-[580px] min-h-[300px] w-auto select-none will-change-transform"
+          className="bottle-fixed h-[54vh] max-h-[540px] min-h-[300px] w-auto select-none will-change-transform"
         />
       </div>
 
-      {/* THE POUR — wine stream + filling glass (scrubbed in Act 4) */}
+      {/* Act 4 wine pour (desktop only) */}
       <div
         ref={glassRef}
         aria-hidden="true"
-        className="pour-layer pointer-events-none fixed left-1/2 top-[66%] z-40 -translate-x-1/2 opacity-0"
+        className="pour-layer pointer-events-none fixed left-1/2 top-[66%] z-40 hidden -translate-x-1/2 opacity-0 lg:block"
       >
-        {/* stream from the inverted bottle mouth into the bowl */}
         <div
           ref={streamRef}
           className="wine-stream absolute -top-[7vh] left-1/2 h-[7vh] w-[7px] -translate-x-1/2 origin-top"
         />
-        {/* the glass — neon edition */}
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/glass-neon.webp" alt="" width={536} height={1546} draggable={false} className="glass-neon h-[27vh] max-h-[300px] min-h-[170px] w-auto select-none" />
-        {/* liquid rising inside the bowl */}
+        <img
+          src="/glass-neon.webp"
+          alt=""
+          width={536}
+          height={1546}
+          draggable={false}
+          className="glass-neon h-[27vh] max-h-[300px] min-h-[170px] w-auto select-none"
+        />
         <div className="absolute left-1/2 top-[11%] h-[40%] w-[37%] -translate-x-1/2 overflow-hidden rounded-b-[46%]">
           <div ref={liquidRef} className="wine-liquid absolute bottom-0 left-0 h-[0%] w-full" />
         </div>

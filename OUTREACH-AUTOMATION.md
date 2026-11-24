@@ -1,307 +1,61 @@
-# 🤖 OUTREACH AUTOMATION — Gmail se daily personalized emails (FREE)
+# Last Call Leads — Simple 1-Time Launch Guide ($0 Monthly Cost)
 
-> **Kya ye karta hai:** Roz subah tumhari site se 25 leads aati hain (naam, city, **asli is-hafte ki filings count**, AI-personalized pehli line) → Google Sheet me girti hain → tumhare Gmail se personalized email chalti hai. **Tum sirf replies ka jawab dete ho.** Cost: ₹0 (Gmail + Groq free tier + Google Sheets free).
-
----
-
-## SETUP (ek baar, 15 minute)
-
-### Step 1 — Site pe AI keys daalo (Vercel → Settings → Environment Variables)
-```
-GROQ_API_KEY=gsk_...        ← console.groq.com se FREE (preferred, fast)
-# ya
-GEMINI_API_KEY=AIza...      ← aistudio.google.com se FREE
-```
-(Key nahi bhi daalo to bhi chalega — smart template line use hoti hai.)
-
-### Step 2 — State me prospects harvest karo (ek baar)
-Apna control room kholo → **PROSPECT FINDER** → apna state RUN karo (TX/FL pehle).
-(Ye attorneys/insurance/beverage-sellers nikalta hai — jo tumhari site KHARIDENGE.)
-
-### Step 3 — Google Sheet banao (BAS ITNA)
-- sheets.google.com → naya BLANK Sheet (naam kuch bhi, jaise "Last Call Outreach")
-- **KUCH AUR NAHI** — script "Leads" tab + headings khud bana dega
-
-### Step 4 — Apps Script paste karo
-Google Sheet me: **Extensions → Apps Script** → purana code delete → neeche ka pura code paste → Save.
-
-### Step 5 — Script me sirf 4 cheezein badlo (upar wale CONFIG block me)
-```
-SITE_URL    = "https://tumhari-site.vercel.app"
-ADMIN_KEY   = "tumhara-admin-key"
-FROM_NAME   = "Amrit"
-POSTAL_ADDRESS = "apna real address (CAN-SPAM law)"
-```
-**STATE KA KOI JHANJHAT NAHI** — script `state=AUTO` maangta hai. Site khud
-hafta-war state rotate karti hai (jis states me prospects harvested hain unme
-ghoomta hai). Prospects ka pool bhi apne aap badhta hai (roz ek naya state
-daily job se judta hai). Tumhe kuch nahi badalna — kabhi nahi.
-
-### Step 6 — Ek baar `setupDailyTrigger` function RUN karo
-(Functions dropdown me `setupDailyTrigger` select → Run → permission allow)
-Ho gaya. **Ab roz 9 AM US-Eastern automatic chalega.**
+Bas yeh **5 kaam 1 baar** karne hain. Iske baad pura system 24/7 apne aap chalega — na dashboard button dabana hai, na phone/laptop on rakhna hai.
 
 ---
 
-## APPS SCRIPT v2 (purA code — copy paste)
+## Step 1 — 3 Naye Free Gmail Accounts Banao (Outreach Ke Liye)
+Apna `supportlastcallleads@gmail.com` sirf support ke liye rakho. Outreach ke liye **3 naye free Gmail accounts** banao (jaise `alex.lastcallleads@gmail.com`, `sam.lastcallleads@gmail.com`, `ryan.lastcallleads@gmail.com`).
 
-```javascript
-// ============================================================
-// LAST CALL LEADS — Outreach Automation v2
-// Roz: site se 25 AI-personalized leads pull + 4-step email sequence
-// Setup: OUTREACH-AUTOMATION.md ke Steps follow karo
-// ============================================================
-
-const SHEET_NAME = "Leads";
-const FROM_NAME  = "Amrit";
-const SITE_URL   = "https://tumhari-site.vercel.app";   // ← BADLO
-const ADMIN_KEY  = "TUMHARA-ADMIN-KEY";                  // ← BADLO
-const DAILY_LIMIT = 25;
-
-const POSTAL_ADDRESS = "APNA REAL POSTAL ADDRESS";       // ← BADLO (CAN-SPAM)
-const FOOTER = `
-
---
-If you'd rather not hear from me, just reply "stop" and I won't email again.
-Last Call Leads, ${POSTAL_ADDRESS}`;
-
-const COL = {
-  firstName: 1, company: 2, email: 3, county: 4, filings: 5,
-  status: 6, sentDate: 7, followDate: 8, aiLine: 9,
-};
-
-// ============================================================
-// STEP 1 — site se aaj ki leads pull karo (AI line + real filings ke saath)
-// ============================================================
-function pullLeads() {
-  const url = `${SITE_URL}/api/admin/outreach?state=AUTO&key=${ADMIN_KEY}&limit=25`; // AUTO = site khud rotate karti hai
-  const res = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
-  if (res.getResponseCode() !== 200) {
-    Logger.log(`Site se leads nahi aayi: ${res.getContentText().slice(0, 200)}`);
-    return;
-  }
-  const data = JSON.parse(res.getContentText());
-  const sheet = ensureSheet_(SpreadsheetApp.getActiveSpreadsheet());
-
-  // already-listed companies skip (duplicate protection)
-  const seen = new Set(
-    sheet.getRange(2, COL.company, Math.max(sheet.getLastRow() - 1, 1), 1)
-      .getValues().flat().map(v => String(v).trim().toLowerCase())
-  );
-
-  let added = 0;
-  data.leads.forEach(l => {
-    if (seen.has(l.company.toLowerCase())) return;
-    sheet.appendRow([
-      l.contactName || guessFirst(l.company),  // FirstName
-      l.company,                               // Company
-      l.email || "",                           // Email (guessed info@ ya khali)
-      l.city || "",                            // City
-      l.filingsThisWeek,                       // asli filings count
-      "NEW",                                   // Status
-      "", "",                                  // SentDate, FollowDate
-      l.aiLine,                                // AI personalized line
-    ]);
-    seen.add(l.company.toLowerCase());
-    added++;
-  });
-  Logger.log(`✅ ${added} nayi leads add hui (${data.leads.length} me se). Filings this week: ${data.filingsThisWeek}`);
-}
-
-function guessFirst(company) {
-  const m = company.match(/\b([A-Z][a-z]+)\s+(Insurance|Agency|Group|Law|LLC|Co)/);
-  return m ? m[1] : "there";
-}
-
-// ============================================================
-// STEP 2 — emails (AI line pehli email me inject hoti hai)
-// ============================================================
-function email1(firstName, company, county, filings, aiLine) {
-  const hook = aiLine && aiLine.length > 20
-    ? aiLine
-    : `${filings} new venues filed liquor licenses in ${county} this week.`;
-  return {
-    subject: `New bar filings in ${county} this week`,
-    body:
-`Hi ${firstName},
-
-${hook}
-
-These venues are 60-90 days from opening and haven't picked their suppliers yet.
-
-Want the free list for your county? Just reply "yes" — no card, no call.
-
-Sample: ${SITE_URL}/sample
-
-${FROM_NAME}
-Last Call Leads`
-  };
-}
-
-function email2(firstName, county, filings) {
-  return {
-    subject: `Re: New bar filings in ${county}`,
-    body:
-`Hi ${firstName},
-
-Following up — ${filings} new filings in ${county} this week alone.
-
-Most distributors find out about a new bar after it already has a supplier. We flag it the day the license is filed — 60-90 days before opening.
-
-Worth a look? Just reply and I'll send the full list.
-
-${FROM_NAME}`
-  };
-}
-
-function email3(firstName) {
-  return {
-    subject: `How this works`,
-    body:
-`Hi ${firstName},
-
-Quick overview — $129/month gets you:
-
-- Daily email every morning
-- Every new liquor license filed in your state
-- Name, address, county, license type, phone where published
-- Only genuinely new filings (no repeats)
-
-Free sample for your county first if you want to test before paying.
-
-Worth 2 minutes? Reply here and I'll set it up.
-
-${FROM_NAME}`
-  };
-}
-
-function email4(firstName) {
-  return {
-    subject: `Leaving the door open`,
-    body:
-`Hi ${firstName},
-
-Last note — no pressure either way.
-
-If new-bar leads ever become useful, the free sample is always here: ${SITE_URL}/sample
-
-Good luck this quarter.
-
-${FROM_NAME}`
-  };
-}
-
-
-// "Leads" tab nahi hai to khud bana dete hain (headers ke saath) —
-// setup me sirf blank Sheet chahiye, aur kuch nahi.
-function ensureSheet_(ss) {
-  let sheet = ss.getSheetByName(SHEET_NAME);
-  if (!sheet) {
-    sheet = ss.insertSheet(SHEET_NAME);
-    sheet.getRange(1, 1, 1, 9).setValues([[
-      "FirstName", "Company", "Email", "County/City", "Filings",
-      "Status", "SentDate", "FollowDate", "AiLine"
-    ]]);
-    sheet.getRange(1, 1, 1, 9).setFontWeight("bold");
-    Logger.log(`Sheet "${SHEET_NAME}" banayi (headers ke saath)`);
-  }
-  return sheet;
-}
-
-// ============================================================
-// STEP 3 — roz ka sender (sequence + follow-ups)
-// ============================================================
-function runDailyOutreach() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName(SHEET_NAME);
-  const data = sheet.getDataRange().getValues();
-
-  let sentToday = 0;
-  const today = new Date();
-
-  for (let i = 1; i < data.length; i++) {
-    if (sentToday >= DAILY_LIMIT) break;
-
-    const row = data[i];
-    const firstName = row[COL.firstName - 1] || "there";
-    const company   = row[COL.company - 1]   || "";
-    const email     = String(row[COL.email - 1] || "").trim();
-    const county    = row[COL.county - 1]    || "your county";
-    const filings   = row[COL.filings - 1]   || "several";
-    const status    = row[COL.status - 1]    || "NEW";
-    const followDate = row[COL.followDate - 1];
-    const aiLine    = row[COL.aiLine - 1]    || "";
-
-    if (!email) continue; // email nahi hai → phone-only lead, CALL karo
-    if (status === "REPLIED" || status === "SKIP" || status === "DONE") continue;
-    if (status !== "NEW" && new Date(followDate) > today) continue;
-
-    let template;
-    if (status === "NEW")         template = email1(firstName, company, county, filings, aiLine);
-    else if (status === "SENT_1") template = email2(firstName, county, filings);
-    else if (status === "SENT_2") template = email3(firstName);
-    else if (status === "SENT_3") template = email4(firstName);
-    else continue;
-
-    try {
-      GmailApp.sendEmail(email, template.subject, template.body + FOOTER, {
-        name: `${FROM_NAME} — Last Call Leads`,
-      });
-
-      const nextStatus = { NEW: "SENT_1", SENT_1: "SENT_2", SENT_2: "SENT_3", SENT_3: "DONE" }[status];
-      const days = { NEW: 4, SENT_1: 4, SENT_2: 6, SENT_3: 0 }[status];
-      const nextDate = new Date();
-      nextDate.setDate(nextDate.getDate() + days);
-
-      sheet.getRange(i + 1, COL.status).setValue(nextStatus);
-      sheet.getRange(i + 1, COL.sentDate).setValue(today.toDateString());
-      sheet.getRange(i + 1, COL.followDate).setValue(nextDate.toDateString());
-      sentToday++;
-      Logger.log(`✅ Sent to ${email} (${company}) — ${nextStatus}`);
-    } catch (err) {
-      Logger.log(`❌ Failed ${email}: ${err}`);
-    }
-
-    if (sentToday < DAILY_LIMIT) Utilities.sleep(8000);
-  }
-  Logger.log(`Done. ${sentToday} emails sent.`);
-}
-
-// ============================================================
-// DAILY JOB — ye trigger chalata hai (pull + send)
-// ============================================================
-function dailyJob() {
-  pullLeads();
-  runDailyOutreach();
-}
-
-// EK BAAR CHALAO — daily trigger set
-function setupDailyTrigger() {
-  ScriptApp.getProjectTriggers().forEach(t => ScriptApp.deleteTrigger(t));
-  ScriptApp.newTrigger("dailyJob")
-    .timeBased()
-    .everyDays(1)
-    .atHour(9)
-    .create();
-  Logger.log("✅ Daily trigger set — roz 9 AM (sheet ka timezone) pull+send automatic");
-}
-```
+Har Gmail account me (4 total: 1 support + 3 outreach):
+1. `myaccount.google.com` → **Security** → **2-Step Verification ON** karo.
+2. Search bar me likho **App Passwords** → koi bhi naam daalo (jaise `LastCall`) → **16-letter password** milega, note kar lo.
 
 ---
 
-## REPLY AAYE TO (5 min/din)
-1. **"Yes" / interested** → unke county ke 3-5 latest filings ka naam+address bhejo (site `/feed?state=XX` se) + trial link: `tumhari-site.vercel.app` pe sign up bol do (7 din free, card nahi)
-2. **Objection "data kaise?"** → `/sample` link + `/coverage` link
-3. **"Stop"** → Sheet me us row ka Status = `SKIP`
+## Step 2 — Resend Free Account (`resend.com`) + Cloudflare Domain Connect Karo
+1. `resend.com` pe free account banao ($0/month = 3,000 emails/month free).
+2. **Domains → Add Domain** → apna Cloudflare domain daalo → **Automatic Cloudflare DNS Verify** click karo.
+3. **API Keys → Create API Key** → key copy kar lo (`re_...`).
+4. Cloudflare Email Routing already `support@yourdomain.com` ke replies tumhare `supportlastcallleads@gmail.com` me bhej dega.
 
-## ⚠️ DELIVERABILITY RULES (Gmail protect karne ke liye)
-- **25/day se zyada mat bhejo** (naya Gmail account ho to pehle hafte 10/day)
-- Guessed `info@` emails pe bounce aaye to Sheet me Status = `SKIP` kar do (bounce Gmail reputation kharab karta hai)
-- Reply ka rate > 5% aa raha hai = sab sahi chal raha hai
-- Subject me kabhi "FREE!!!" ya sab-caps mat likhna
+---
 
-## ROTATION — 100% AUTOMATIC (tumhe kuch nahi karna)
-- Site khud decide karti hai is hafte kaunsa state (jahan prospects + filings sabse ready hain)
-- Prospects ka pool roz apne aap badhta hai (daily job ek naya state harvest karta hai jab tak 5 na ho)
-- TX/FL/CA jaise bade states ke liye ek baar dashboard → PROSPECT FINDER → RUN daba dena (optional, zyada leads ke liye)
-- Har Monday ko tumhe recap email aayega: "is hafte ka state, kitni filings aayi, biggest fish kaun"
+## Step 3 — Free Database (`neon.tech`) + Payment (`dodopayments.com`)
+1. `neon.tech` pe free PostgreSQL project banao → `DATABASE_URL` copy karo.
+2. `dodopayments.com` pe 2 monthly USD products banao:
+   - **Territory** (`$129/mo`) → Product ID copy karo (`DODO_PRODUCT_SOLO`)
+   - **Multi-State** (`$249/mo`) → Product ID copy karo (`DODO_PRODUCT_PRO`)
+   - Webhook URL add karo: `https://YOUR-DOMAIN.com/api/webhooks/dodopayments` → Secret copy karo (`DODO_WEBHOOK_SECRET`).
+
+---
+
+## Step 4 — Vercel Hobby (Free) Pe Deploy + Env Vars Paste Karo
+GitHub pe push karke Vercel me import karo, aur **Project → Settings → Environment Variables** me `.env.example` wali values daalo:
+- `DATABASE_URL` (Neon se)
+- `ADMIN_KEY`, `CRON_SECRET`, `UNSUBSCRIBE_SECRET` (koi bhi 3 alag lambe random passwords)
+- `NEXT_PUBLIC_SITE_URL` (`https://yourdomain.com`)
+- `NEXT_PUBLIC_CONTACT_EMAIL` (`support@yourdomain.com`)
+- `NEXT_PUBLIC_BUSINESS_POSTAL_ADDRESS` (apna city/state address)
+- `RESEND_API_KEY` + `ALERT_FROM_EMAIL="Last Call Leads <alerts@yourdomain.com>"`
+- `SMTP_USER="supportlastcallleads@gmail.com"` + `SMTP_PASS="16-letter-app-pass"` (auto-failover backup!)
+- `OUTREACH_SMTP_ACCOUNTS="gmail1@gmail.com:apppass1, gmail2@gmail.com:apppass2, gmail3@gmail.com:apppass3"`
+- `DODO_API_KEY`, `DODO_PRODUCT_SOLO`, `DODO_PRODUCT_PRO`, `DODO_WEBHOOK_SECRET`
+- **Free Phone Alerts (Optional):** Telegram me `@BotFather` se free bot banao → `TELEGRAM_BOT_TOKEN` aur `TELEGRAM_CHAT_ID` daalo.
+
+Deploy hone ke baad `https://yourdomain.com/api/health` kholo — `ok: true` aur `outreachActive: true` dikhna chahiye.
+
+---
+
+## Step 5 — Google Apps Script Free 24/7 Alarm Clock Set Karo (1 Minute)
+1. `https://script.google.com` kholo → **New Project**.
+2. `scripts/google-apps-script-cron.gs` ka pura code copy karke paste karo.
+3. Top pe `SITE_URL` aur `CRON_SECRET` bharo.
+4. Dropdown me **`installAutopilotTriggers`** select karke **Run** dabao → Allow permissions.
+
+**KHATAM!** Ab:
+- Pehla 9-state data pull khud ho jayega (no manual dashboard clicks).
+- Har 2 ghante (US business hours) me 5 human-paced cold emails + automatic 3-day warm follow-ups 3 Gmails me rotate hoke jayengi.
+- Roz subah paid & trial customers ko unke territory ke naye bars + interactive map + Google Maps route email hoga.
+- Har Mon/Wed/Fri Telegram pe ready-to-paste LinkedIn post aayega (10 second me share kar dena).
+- `https://yourdomain.com/sitemap.xml` ko **Google Search Console** me submit kar do taaki free Google SEO traffic start ho!

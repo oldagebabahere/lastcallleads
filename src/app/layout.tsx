@@ -1,38 +1,14 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
-import { Playfair_Display, EB_Garamond, Inter_Tight, JetBrains_Mono } from "next/font/google";
 import { BRAND } from "@/lib/brand";
 import ScrollProgress from "@/components/scroll-progress";
 import { Analytics } from "@vercel/analytics/react";
 import "./globals.css";
 
-// Editorial mix: a light modern grotesque for headlines (the "premium animated
-// site" look), Playfair italics for accent phrases (the bar-luxe brand voice),
-// a warm readable serif for body, mono for registry/terminal details.
-const display = Inter_Tight({
-  subsets: ["latin"],
-  variable: "--font-display",
-  weight: ["300", "400", "500", "600", "700"],
-});
-
-const serifAccent = Playfair_Display({
-  subsets: ["latin"],
-  variable: "--font-serif-accent",
-  style: ["normal", "italic"],
-  weight: ["400", "500", "600", "700"],
-});
-
-const sans = EB_Garamond({
-  subsets: ["latin"],
-  variable: "--font-sans-body",
-  weight: ["400", "500", "600"],
-  style: ["normal", "italic"],
-});
-
-const mono = JetBrains_Mono({
-  subsets: ["latin"],
-  variable: "--font-mono-code",
-});
+// Editorial Google Fonts loaded cleanly via stylesheet so Next.js 16 builds
+// never fail on build-time Google Font scraper hiccups.
+const GOOGLE_FONTS_HREF =
+  "https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400..600;1,400..600&family=Inter+Tight:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,400..700;1,400..700&display=swap";
 
 export const metadata: Metadata = {
   metadataBase: new URL(
@@ -43,7 +19,7 @@ export const metadata: Metadata = {
     template: `%s · ${BRAND.name}`,
   },
   description:
-    `${BRAND.name} watches liquor-license records across ten US states every morning. The moment a new bar, restaurant or package store files, it lands in your inbox — weeks before the doors open.`,
+    `${BRAND.name} monitors official US state liquor-license portals across 9 live markets (Texas, New York, California, Illinois (Chicago), Washington, Oregon, Colorado, Connecticut, and Missouri) every morning — delivering venue addresses, LLC entities, direct phones, beverage program fit, interactive territory maps & 1-click Google Maps routes before doors open.`,
   keywords: [
     "liquor license leads",
     "new bar filings",
@@ -77,11 +53,12 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html
-      lang="en"
-      suppressHydrationWarning
-      className={`${display.variable} ${serifAccent.variable} ${sans.variable} ${mono.variable}`}
-    >
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link rel="stylesheet" href={GOOGLE_FONTS_HREF} />
+      </head>
       <body className="grain">
         {/* theme bootstrap — runs before first paint so there is no flash */}
         <script
@@ -90,7 +67,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           }}
         />
         <ScrollProgress />
-        <Analytics />
+        {process.env.VERCEL ? <Analytics /> : null}
         {children}
       </body>
     </html>

@@ -10,9 +10,9 @@
   --color-panel: #17100f;
   --color-panel2: #1e1413;
   --color-cream: #f6eee1;
-  --color-smoke: #a79391;
-  --color-faint: #6e585b;
-  --color-amber: #e0aa4a;
+  --color-smoke: #bdb0ad;
+  --color-faint: #988689;
+  --color-amber: #e5b050;
   --color-ember: #c9722e;
   --color-wine: #a4435a;
   --color-wine2: #7a2b3e;
@@ -46,10 +46,10 @@
   --color-inkread: #241016;
   --color-creamcard: #e0dcce;
 
-  --font-display: var(--font-display), "Inter Tight", ui-sans-serif, system-ui, sans-serif;
-  --font-serif: var(--font-serif-accent), "Playfair Display", ui-serif, Georgia, serif;
-  --font-sans: var(--font-sans-body), "EB Garamond", ui-serif, Georgia, serif;
-  --font-mono: var(--font-mono-code), ui-monospace, "SF Mono", monospace;
+  --font-display: "Inter Tight", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Playfair Display", ui-serif, Georgia, serif;
+  --font-sans: "EB Garamond", ui-serif, Georgia, serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", monospace;
 }
 
 html {
@@ -57,21 +57,35 @@ html {
 }
 
 body {
-  background: var(--color-paper);
-  color: var(--color-inkread);
+  background: var(--color-ink);
+  color: var(--color-cream);
   font-family: var(--font-sans);
   font-size: 17px;
   line-height: 1.65;
   -webkit-font-smoothing: antialiased;
   overflow-x: clip;
-  background-image: radial-gradient(
-    1200px 620px at 50% -8%,
-    rgba(255, 252, 245, 0.9),
-    transparent 60%
-  ),
-  radial-gradient(1000px 560px at 100% 14%, rgba(199, 163, 135, 0.28), transparent 58%),
-  radial-gradient(900px 620px at 0% 46%, rgba(164, 67, 90, 0.07), transparent 60%);
+  background-image:
+    radial-gradient(1100px 560px at 50% -10%, rgba(122, 43, 62, 0.24), transparent 62%),
+    radial-gradient(900px 520px at 100% 18%, rgba(224, 170, 74, 0.06), transparent 58%);
   background-attachment: fixed;
+}
+
+/* Homepage light-editorial canvas (toggled cleanly by [data-theme="dark"]). */
+.theme-flip {
+  background-color: var(--color-paper);
+  color: var(--color-inkread);
+  background-image:
+    radial-gradient(1200px 620px at 50% -8%, rgba(255, 252, 245, 0.9), transparent 60%),
+    radial-gradient(1000px 560px at 100% 14%, rgba(199, 163, 135, 0.28), transparent 58%),
+    radial-gradient(900px 620px at 0% 46%, rgba(164, 67, 90, 0.07), transparent 60%);
+}
+
+[data-theme="dark"] .theme-flip {
+  background-color: #100b0e;
+  color: var(--color-cream);
+  background-image:
+    radial-gradient(1000px 560px at 100% 14%, rgba(164, 67, 90, 0.1), transparent 58%),
+    radial-gradient(900px 620px at 0% 46%, rgba(164, 67, 90, 0.07), transparent 60%);
 }
 
 /* soft warm vignette at the page edges */
@@ -967,6 +981,10 @@ body.intro-lock .hero-fade {
 .card-soft2 {
   background: rgba(255, 252, 245, 0.66);
 }
+.faq-card {
+  border: 1px solid rgba(26, 20, 18, 0.12);
+  background: rgba(255, 255, 255, 0.58);
+}
 
 [data-theme="dark"] .act-light,
 [data-theme="dark"] .section-cream,
@@ -1026,8 +1044,61 @@ body.intro-lock .hero-fade {
 [data-theme="dark"] .card-soft2 {
   background: rgba(28, 18, 21, 0.72);
 }
+[data-theme="dark"] .faq-card {
+  border-color: rgba(246, 238, 225, 0.12);
+  background: rgba(255, 255, 255, 0.045);
+}
 
 /* keep the neon logo box dark even though --color-ink flipped */
 [data-theme="dark"] .logo-neon {
   background: #17100f;
+}
+
+/* ================= MOBILE 60FPS PERFORMANCE & SMOOTH ERGONOMICS =================
+   Avoid fixed-background scroll repaints and heavy full-screen GPU filters on phones. */
+@media (max-width: 1023px) {
+  body,
+  [data-theme="dark"] body {
+    background-attachment: scroll;
+  }
+  .grain::before {
+    display: none;
+  }
+}
+@media (max-width: 767px) {
+  .aurora span {
+    filter: blur(48px);
+    animation: none;
+    opacity: 0.32;
+  }
+  .act-panel,
+  .alloc-row,
+  .liquid-glass {
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+}
+
+/* ================= DARK EDITORIAL LEAFLET POPUPS ================= */
+.leaflet-container {
+  background: #0e0a0c;
+  font-family: var(--font-sans);
+}
+.leaflet-popup-content-wrapper,
+.leaflet-popup-tip {
+  background: #17100f !important;
+  color: #f6eee1 !important;
+  border: 1px solid rgba(229, 176, 80, 0.35);
+  box-shadow: 0 18px 40px -12px rgba(0, 0, 0, 0.85) !important;
+}
+.leaflet-popup-close-button {
+  color: #bdb0ad !important;
+}
+.leaflet-control-attribution {
+  background: rgba(14, 10, 12, 0.78) !important;
+  color: #988689 !important;
+  font-size: 9px !important;
+}
+.leaflet-control-attribution a {
+  color: #e5b050 !important;
 }

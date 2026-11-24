@@ -16,49 +16,81 @@ const TAGS: { id: string; label: string }[] = [
 
 type Phase = "loading" | "ready" | "saving" | "saved" | "error";
 
-export default function PrefsForm({ email, token }: { email: string; token: string }) {
+export default function PrefsForm({
+  email,
+  token,
+  initialCity = "",
+  initialQ = "",
+}: {
+  email: string;
+  token: string;
+  initialCity?: string;
+  initialQ?: string;
+}) {
   const qs = new URLSearchParams({ email, token }).toString();
 
   const [phase, setPhase] = useState<Phase>("loading");
+  const [plan, setPlan] = useState("solo");
+  const [maxStates, setMaxStates] = useState(1);
   const [states, setStates] = useState<string[]>(["TX"]);
   const [zips, setZips] = useState("");
-  const [city, setCity] = useState("");
-  const [keywords, setKeywords] = useState("");
+  const [city, setCity] = useState(initialCity);
+  const [keywords, setKeywords] = useState(initialQ);
+  const [webhookUrl, setWebhookUrl] = useState("");
   const [tags, setTags] = useState<string[]>([]);
   const [limit, setLimit] = useState(40);
+  const [exportHref, setExportHref] = useState<string | null>(null);
+  const [upgradeHref, setUpgradeHref] = useState<string | null>(null);
   const [message, setMessage] = useState("");
 
   useEffect(() => {
-    // "Save this search" from /feed lands here with ?city=…&q=… prefilled.
-    const pre = new URLSearchParams(window.location.search);
-    const preCity = pre.get("city") ?? "";
-    const preQ = pre.get("q") ?? "";
-    if (preCity) setCity(preCity);
-    if (preQ) setKeywords(preQ);
+    let active = true;
     fetch(`/api/prefs?${qs}`)
       .then((r) => r.json())
       .then((d) => {
+        if (!active) return;
         if (d.ok) {
+          setPlan(d.prefs.plan ?? "solo");
+          setMaxStates(d.prefs.maxStates ?? 1);
           setStates(d.prefs.states?.length ? d.prefs.states : ["TX"]);
           setZips(d.prefs.zipFilter ?? "");
-          setCity(d.prefs.cityFilter ?? "");
-          setKeywords(d.prefs.keywordFilter ?? "");
+          setCity((prev) => prev || (d.prefs.cityFilter ?? ""));
+          setKeywords((prev) => prev || (d.prefs.keywordFilter ?? ""));
+          setWebhookUrl(d.prefs.webhookUrl ?? "");
           setTags(d.prefs.typeFilter ? d.prefs.typeFilter.split(",") : []);
           setLimit(d.prefs.digestLimit ?? 40);
+          setExportHref(d.prefs.exportHref ?? null);
+          setUpgradeHref(d.prefs.upgradeHref ?? null);
           setPhase("ready");
         } else {
           setPhase("error");
         }
       })
-      .catch(() => setPhase("error"));
+      .catch(() => {
+        if (active) setPhase("error");
+      });
+    return () => {
+      active = false;
+    };
   }, [qs]);
 
-  function toggle<T>(list: T[], value: T, setter: (v: T[]) => void) {
-    setter(list.includes(value) ? list.filter((x) => x !== value) : [...list, value]);
+  function toggleState(code: string) {
+    setStates((prev) => {
+      if (prev.includes(code)) return prev.filter((x) => x !== code);
+      if (prev.length >= maxStates) return prev;
+      return [...prev, code];
+    });
+  }
+
+  function toggleTag(id: string) {
+    setTags((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
   }
 
   async function save() {
     setPhase("saving");
+    setMessage("");
     try {
       const res = await fetch(`/api/prefs?${qs}`, {
         method: "POST",
@@ -69,11 +101,13 @@ export default function PrefsForm({ email, token }: { email: string; token: stri
           typeFilter: tags.join(","),
           cityFilter: city,
           keywordFilter: keywords,
+          webhookUrl,
           digestLimit: limit,
         }),
       });
       const d = await res.json();
       if (d.ok) {
+        setStates(d.saved.states);
         setPhase("saved");
         setMessage(
           `Saved. ${d.saved.states.join(", ")} · ${d.saved.zips.length} ZIP${
@@ -82,11 +116,11 @@ export default function PrefsForm({ email, token }: { email: string; token: stri
         );
       } else {
         setPhase("error");
-        setMessage(d.error ?? "Could not save");
+        setMessage(d.error ?? "Could not save preferences.");
       }
     } catch {
       setPhase("error");
-      setMessage("Network error — try again");
+      setMessage("Network error — please try again.");
     }
   }
 
@@ -104,34 +138,59 @@ export default function PrefsForm({ email, token }: { email: string; token: stri
   if (phase === "error" && !message) {
     return (
       <div className="rounded-xl border border-blood/40 bg-blood/10 p-6 text-sm text-cream">
-        Could not load your preferences. Use the link from your latest digest email.
+        Could not load your preferences. Please open the personal preferences link from your latest digest email.
       </div>
     );
   }
 
   return (
     <div className="space-y-8">
-      {/* states */}
+      {upgradeHref && (
+        <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-amber/50 bg-amber/10 p-5">
+          <div>
+            <p className="font-mono text-[10px] tracking-[0.2em] text-amber">
+              FREE TRIAL · {plan.toUpperCase()} PLAN
+            </p>
+            <p className="mt-1 text-sm text-cream">
+              Keep your daily morning alerts running seamlessly after day 7.
+            </p>
+          </div>
+          <a
+            href={upgradeHref}
+            className="rounded-md bg-amber px-4 py-2.5 font-mono text-[11px] font-semibold tracking-[0.12em] text-ink transition-transform hover:scale-[1.03]"
+          >
+            UPGRADE NOW →
+          </a>
+        </div>
+      )}
+
+      {/* 1. States */}
       <section className="rounded-xl border border-line bg-panel p-6">
         <h2 className="font-display text-xl font-medium text-cream">
           1. Which states?
         </h2>
-        <p className="mt-1 text-sm text-smoke">Pick every territory you sell into.</p>
+        <p className="mt-1 text-sm text-smoke">
+          Your <span className="font-mono uppercase text-amber">{plan}</span> plan includes up to{" "}
+          {maxStates} {maxStates === 1 ? "state" : "states"}.
+        </p>
         <div className="mt-4">
-          <StatePicker selected={states} onToggle={(s) => toggle(states, s, setStates)} max={3} />
+          <StatePicker
+            selected={states}
+            onToggle={toggleState}
+            onClear={() => setStates([])}
+            max={maxStates}
+          />
         </div>
-            </section>
+      </section>
 
-      {/* zips */}
+      {/* 2. ZIP codes */}
       <section className="rounded-xl border border-line bg-panel p-6">
         <h2 className="font-display text-xl font-medium text-cream">
           2. Narrow to ZIP codes{" "}
-          <span className="font-mono text-[10px] tracking-[0.15em] text-faint">
-            OPTIONAL
-          </span>
+          <span className="font-mono text-[10px] tracking-[0.15em] text-faint">OPTIONAL</span>
         </h2>
         <p className="mt-1 text-sm text-smoke">
-          Leave empty to receive the whole state. Separate up to 25 ZIPs with commas.
+          Leave empty to cover the entire state. Separate up to 25 five-digit ZIP codes with commas.
         </p>
         <input
           value={zips}
@@ -140,20 +199,18 @@ export default function PrefsForm({ email, token }: { email: string; token: stri
           className={`${input} mt-4`}
         />
         <p className="mt-2 font-mono text-[10px] tracking-[0.1em] text-faint">
-          TIP: YOUR BEST 5 ZIPS BEAT THE WHOLE STATE — FEWER, BETTER CALLS
+          TIP: FOCUSING ON YOUR CORE 5–10 ZIPS MEANS HIGHER-CONVERTING MORNING CALLS
         </p>
       </section>
 
-      {/* saved search — city + keywords */}
+      {/* 3. Saved search — city + keywords */}
       <section className="rounded-xl border border-amber/40 bg-amber/5 p-6">
         <h2 className="font-display text-xl font-medium text-cream">
-          Saved search{" "}
-          <span className="font-mono text-[10px] tracking-[0.15em] text-amber">
-            ALERTS
-          </span>
+          3. Saved search filters{" "}
+          <span className="font-mono text-[10px] tracking-[0.15em] text-amber">OPTIONAL</span>
         </h2>
         <p className="mt-1 text-sm text-smoke">
-          City ya keywords — sirf matching filings aayenge, roz subah.
+          Restrict your daily digest to a specific city or keywords — only matching filings are sent each morning.
         </p>
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
           <input
@@ -170,24 +227,24 @@ export default function PrefsForm({ email, token }: { email: string; token: stri
           />
         </div>
         <p className="mt-2 font-mono text-[10px] tracking-[0.1em] text-faint">
-          EXAMPLE: CITY "HOUSTON" + KEYWORD "FULL BAR" = SIRF HOUSTON KE FULL-BAR FILINGS
+          EXAMPLE: CITY &ldquo;HOUSTON&rdquo; + KEYWORD &ldquo;FULL BAR&rdquo; = ONLY HOUSTON FULL-BAR FILINGS
         </p>
       </section>
 
-      {/* lead types */}
+      {/* 4. Lead types */}
       <section className="rounded-xl border border-line bg-panel p-6">
         <h2 className="font-display text-xl font-medium text-cream">
-          3. Which kinds of venue?
+          4. Which venue types?
         </h2>
         <p className="mt-1 text-sm text-smoke">
-          Pick none to receive every type. Pick one or more to filter.
+          Leave all unselected to receive every venue category, or select specific categories below.
         </p>
         <div className="mt-4 flex flex-wrap gap-2">
           {TAGS.map((t) => (
             <button
               key={t.id}
               type="button"
-              onClick={() => toggle(tags, t.id, setTags)}
+              onClick={() => toggleTag(t.id)}
               className={`rounded-md border px-3 py-2 text-left text-sm transition-colors ${
                 tags.includes(t.id)
                   ? "border-amber/60 bg-amber/15 text-amber"
@@ -200,13 +257,13 @@ export default function PrefsForm({ email, token }: { email: string; token: stri
         </div>
       </section>
 
-      {/* size */}
+      {/* 5. Digest size */}
       <section className="rounded-xl border border-line bg-panel p-6">
         <h2 className="font-display text-xl font-medium text-cream">
-          4. How many per email?
+          5. Maximum leads per email
         </h2>
         <p className="mt-1 text-sm text-smoke">
-          Long list or short shortlist — your call. Highest-scoring always come first.
+          Short shortlist or comprehensive list — highest-scoring leads always appear at the top.
         </p>
         <div className="mt-4 flex items-center gap-4">
           <input
@@ -216,15 +273,36 @@ export default function PrefsForm({ email, token }: { email: string; token: stri
             step={10}
             value={limit}
             onChange={(e) => setLimit(Number(e.target.value))}
+            aria-label="Maximum leads per email"
             className="h-2 flex-1 cursor-pointer rounded-lg bg-panel2 accent-amber"
           />
           <span className="font-display text-2xl font-semibold text-amber">{limit}</span>
         </div>
       </section>
 
-      {/* save */}
+      {/* 6. Real-time Slack / Discord / Zapier / CRM Webhook Push */}
+      <section className="rounded-xl border border-line bg-panel p-6">
+        <h2 className="font-display text-xl font-medium text-cream">
+          6. Slack, Discord, or Zapier webhook{" "}
+          <span className="font-mono text-[10px] tracking-[0.15em] text-amber">OPTIONAL</span>
+        </h2>
+        <p className="mt-1 text-sm text-smoke">
+          Paste any public <code className="text-cream">https://</code> Slack, Discord, Zapier,
+          Make, or HubSpot webhook URL to auto-post new bars straight into your sales channel every
+          morning.
+        </p>
+        <input
+          type="url"
+          value={webhookUrl}
+          onChange={(e) => setWebhookUrl(e.target.value)}
+          placeholder="https://hooks.slack.com/services/..."
+          className={`${input} mt-4`}
+        />
+      </section>
+
       <div className="flex flex-wrap items-center gap-4">
         <button
+          type="button"
           onClick={save}
           disabled={phase === "saving"}
           className="flex items-center gap-2 rounded-md bg-amber px-6 py-3 font-mono text-[11px] font-semibold tracking-[0.12em] text-ink transition-transform hover:scale-[1.02] disabled:opacity-50"
@@ -237,12 +315,14 @@ export default function PrefsForm({ email, token }: { email: string; token: stri
           SAVE PREFERENCES
         </button>
 
-        <a
-          href={`/api/export?${qs}`}
-          className="rounded-md border border-line px-5 py-3 font-mono text-[11px] tracking-[0.12em] text-smoke transition-colors hover:border-amber/50 hover:text-amber"
-        >
-          DOWNLOAD LAST 30 DAYS (CSV)
-        </a>
+        {exportHref && (
+          <a
+            href={exportHref}
+            className="rounded-md border border-line px-5 py-3 font-mono text-[11px] tracking-[0.12em] text-smoke transition-colors hover:border-amber/50 hover:text-amber"
+          >
+            DOWNLOAD LAST 30 DAYS (CSV)
+          </a>
+        )}
 
         {(phase === "saved" || message) && (
           <span className="flex items-center gap-2 font-mono text-[11px] text-leaf">
@@ -253,8 +333,7 @@ export default function PrefsForm({ email, token }: { email: string; token: stri
       </div>
 
       <p className="font-mono text-[10px] leading-relaxed tracking-[0.06em] text-faint">
-        CHANGES APPLY FROM YOUR NEXT DIGEST. THIS LINK IS PRIVATE — ANYONE WITH IT CAN
-        EDIT THESE SETTINGS.
+        CHANGES APPLY FROM YOUR NEXT MORNING DIGEST. KEEP THIS MAGIC LINK PRIVATE.
       </p>
     </div>
   );

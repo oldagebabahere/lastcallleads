@@ -1,19 +1,28 @@
-// Subscriber preferences — no login, no password. A single HMAC token
-// (the same one used for unsubscribe) opens and saves preferences.
+// Subscriber preferences — authenticated by scoped `prefs` HMAC token.
+// Enforces plan-based state caps (solo: 1, pro: 3, enterprise: 51).
 import { db } from "@/db";
 import { ensureSchema } from "@/db/bootstrap";
 import { subscribers } from "@/db/schema";
-import { verifyUnsubscribeToken } from "@/lib/unsubscribe";
+import {
+  checkoutUpgradeUrl,
+  exportUrl,
+  verifyScopedToken,
+} from "@/lib/unsubscribe";
 import { INTENT_TAGS } from "@/lib/lead-score";
+import { LIVE_MARKETS, LIVE_STATE_SET } from "@/lib/states";
+import { validatePublicWebhookUrl } from "@/lib/notify";
 import { eq } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
-// All 50 states + DC — matches the subscribe route.
-const VALID_STATES = new Set(
-  "AL AK AZ AR CA CO CT DC DE FL GA HI IA ID IL IN KS KY LA MA MD ME MI MN MO MS MT NC ND NE NH NJ NM NV NY OH OK OR PA RI SC SD TN TX UT VA VT WA WI WV WY".split(" ")
-);
+const VALID_STATES = LIVE_STATE_SET;
 const VALID_TAGS = new Set(INTENT_TAGS.map((t) => t.id));
+
+function maxStatesForPlan(plan: string): number {
+  if (plan === "enterprise") return LIVE_MARKETS.length;
+  if (plan === "pro") return 3;
+  return 1;
+}
 
 function readAuth(req: Request) {
   const url = new URL(req.url);
@@ -25,7 +34,7 @@ function readAuth(req: Request) {
 
 export async function GET(req: Request) {
   const { email, token } = readAuth(req);
-  if (!email || !verifyUnsubscribeToken(email, token)) {
+  if (!email || !verifyScopedToken(email, token, "prefs")) {
     return Response.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
   await ensureSchema();
@@ -44,20 +53,28 @@ export async function GET(req: Request) {
     ok: true,
     prefs: {
       email: sub.email,
+      plan: sub.plan,
+      maxStates: maxStatesForPlan(sub.plan),
       states: sub.states.split(",").filter(Boolean),
       zipFilter: sub.zipFilter ?? "",
       typeFilter: sub.typeFilter ?? "",
       cityFilter: sub.cityFilter ?? "",
       keywordFilter: sub.keywordFilter ?? "",
+      webhookUrl: sub.webhookUrl ?? "",
       digestLimit: sub.digestLimit,
       status: sub.status,
+      exportHref: exportUrl(sub.email),
+      upgradeHref:
+        sub.status !== "active"
+          ? checkoutUpgradeUrl(sub.email, sub.plan === "pro" ? "pro" : "solo")
+          : null,
     },
   });
 }
 
 export async function POST(req: Request) {
   const { email, token } = readAuth(req);
-  if (!email || !verifyUnsubscribeToken(email, token)) {
+  if (!email || !verifyScopedToken(email, token, "prefs")) {
     return Response.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
 
@@ -67,6 +84,7 @@ export async function POST(req: Request) {
     typeFilter?: string;
     cityFilter?: string;
     keywordFilter?: string;
+    webhookUrl?: string;
     digestLimit?: number;
   };
   try {
@@ -75,51 +93,75 @@ export async function POST(req: Request) {
     return Response.json({ ok: false, error: "bad_json" }, { status: 400 });
   }
 
-  const states = (body.states ?? [])
-    .map((s) => String(s).trim().toUpperCase())
-    .filter((s) => VALID_STATES.has(s))
-    .slice(0, 3);
+  await ensureSchema();
+  const rows = await db
+    .select()
+    .from(subscribers)
+    .where(eq(subscribers.email, email))
+    .limit(1);
+  const sub = rows[0];
+  if (!sub) {
+    return Response.json({ ok: false, error: "not_found" }, { status: 404 });
+  }
 
-  // ZIP codes: keep only 5-digit, dedupe, cap at 25 (protects the query).
-  const zips = String(body.zipFilter ?? "")
-    .split(/[,\s]+/)
-    .map((z) => z.replace(/\D/g, "").slice(0, 5))
-    .filter((z) => z.length === 5)
-    .slice(0, 25);
+  const maxStates = maxStatesForPlan(sub.plan);
+  const states = Array.from(
+    new Set(
+      (body.states ?? [])
+        .map((s) => String(s).trim().toUpperCase())
+        .filter((s) => VALID_STATES.has(s))
+    )
+  ).slice(0, maxStates);
 
-  const tags = String(body.typeFilter ?? "")
-    .split(",")
-    .map((t) => t.trim())
-    .filter((t) => VALID_TAGS.has(t))
-    .slice(0, 8);
+  const zips = Array.from(
+    new Set(
+      String(body.zipFilter ?? "")
+        .split(/[,\s]+/)
+        .map((z) => z.replace(/\D/g, "").slice(0, 5))
+        .filter((z) => z.length === 5)
+    )
+  ).slice(0, 25);
+
+  const tags = Array.from(
+    new Set(
+      String(body.typeFilter ?? "")
+        .split(",")
+        .map((t) => t.trim())
+        .filter((t) => VALID_TAGS.has(t))
+    )
+  ).slice(0, 8);
 
   const city = String(body.cityFilter ?? "").trim().slice(0, 120);
   const keywords = String(body.keywordFilter ?? "").trim().slice(0, 240);
-
+  const rawWebhook = String(body.webhookUrl ?? "").trim();
+  const safeWebhook = rawWebhook ? await validatePublicWebhookUrl(rawWebhook) : null;
+  if (rawWebhook && !safeWebhook) {
+    return Response.json(
+      { ok: false, error: "Webhook URL must be a valid public https:// Slack, Discord, or Zapier URL." },
+      { status: 422 }
+    );
+  }
   const limit = Math.min(200, Math.max(5, Number(body.digestLimit) || 40));
 
-  await ensureSchema();
-  const updated = await db
+  const finalStates = states.length ? states : [sub.states.split(",")[0] || "TX"];
+
+  await db
     .update(subscribers)
     .set({
-      states: states.length ? states.join(",") : "TX",
+      states: finalStates.join(","),
       zipFilter: zips.length ? zips.join(",") : null,
       typeFilter: tags.length ? tags.join(",") : null,
       cityFilter: city.length ? city.toLowerCase() : null,
       keywordFilter: keywords.length ? keywords.toLowerCase() : null,
+      webhookUrl: safeWebhook,
       digestLimit: limit,
     })
-    .where(eq(subscribers.email, email))
-    .returning({ id: subscribers.id });
-
-  if (!updated.length) {
-    return Response.json({ ok: false, error: "not_found" }, { status: 404 });
-  }
+    .where(eq(subscribers.id, sub.id));
 
   return Response.json({
     ok: true,
     saved: {
-      states,
+      states: finalStates,
       zips,
       tags,
       limit,

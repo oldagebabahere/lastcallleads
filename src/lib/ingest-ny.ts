@@ -1,12 +1,15 @@
 // New York — State Liquor Authority via the official NY Open Data portal
 // (Socrata). Two feeds:
-//  1) Current SLA Pending Licenses  → applications in flight (gold signal)
-//  2) Current SLA Active Licenses   → newly issued licenses
+//  1) Current SLA Pending Licenses  -> applications in flight
+//  2) Current SLA Active Licenses   -> newly issued licenses
 import {
   clean,
+  cleanCounty,
   cleanZip,
   fetchSocrata,
+  normalizeCity,
   NormalizedRecord,
+  safeCoord,
   safeDate,
 } from "./sources";
 
@@ -16,12 +19,19 @@ const ACTIVE = "9s3h-dpkz"; // Current Liquor Authority Active Licenses
 export const NY_PENDING_URL = `https://${HOST}/d/${PENDING}`;
 export const NY_ACTIVE_URL = `https://${HOST}/d/${ACTIVE}`;
 
-function geo(r: Record<string, unknown>): { lat: number | null; lng: number | null } {
-  const g = r.georeference as { coordinates?: [number, number] } | undefined;
+export function extractGeoPoint(
+  r: Record<string, unknown>
+): { lat: number | null; lng: number | null } {
+  const g = (r.georeference ?? r.location) as
+    | { coordinates?: [number, number]; latitude?: unknown; longitude?: unknown }
+    | undefined;
   if (g && Array.isArray(g.coordinates) && g.coordinates.length === 2) {
-    return { lng: g.coordinates[0], lat: g.coordinates[1] };
+    return { lng: safeCoord(g.coordinates[0]), lat: safeCoord(g.coordinates[1]) };
   }
-  return { lat: null, lng: null };
+  if (g && (g.latitude !== undefined || g.longitude !== undefined)) {
+    return { lat: safeCoord(g.latitude), lng: safeCoord(g.longitude) };
+  }
+  return { lat: safeCoord(r.latitude), lng: safeCoord(r.longitude) };
 }
 
 export async function fetchNyPending(): Promise<NormalizedRecord[]> {
@@ -33,8 +43,9 @@ export async function fetchNyPending(): Promise<NormalizedRecord[]> {
   for (const r of rows) {
     const appId = clean(r.application_id);
     if (!appId) continue;
-    const { lat, lng } = geo(r);
+    const { lat, lng } = extractGeoPoint(r);
     const legalName = clean(r.legalname);
+    const dba = clean(r.dba);
     out.push({
       state: "NY",
       key: `NY-P-${appId}`,
@@ -42,13 +53,13 @@ export async function fetchNyPending(): Promise<NormalizedRecord[]> {
       status: clean(r.status) ?? "Pending",
       licenseType: clean(r.class) ?? clean(r.type),
       typeName: clean(r.description),
-      tradeName: legalName,
+      tradeName: dba ?? legalName,
       ownerName: legalName,
       phone: null,
       address: clean(r.actual_address_of_premises),
-      city: clean(r.city),
+      city: normalizeCity(r.city),
       zip: cleanZip(r.zip_code),
-      county: clean(r.premises_county),
+      county: cleanCounty(r.premises_county),
       filedAt: safeDate(r.received_date),
       issuedAt: null,
       expiresAt: null,
@@ -63,13 +74,13 @@ export async function fetchNyPending(): Promise<NormalizedRecord[]> {
 export async function fetchNyActive(): Promise<NormalizedRecord[]> {
   const rows = await fetchSocrata(HOST, ACTIVE, {
     order: "originalissuedate DESC",
-    limit: 6000,
+    limit: 5000,
   });
   const out: NormalizedRecord[] = [];
   for (const r of rows) {
     const permitId = clean(r.licensepermitid);
     if (!permitId) continue;
-    const { lat, lng } = geo(r);
+    const { lat, lng } = extractGeoPoint(r);
     out.push({
       state: "NY",
       key: `NY-L-${permitId}`,
@@ -81,12 +92,12 @@ export async function fetchNyActive(): Promise<NormalizedRecord[]> {
       ownerName: clean(r.legalname),
       phone: null,
       address: clean(r.actualaddressofpremises),
-      city: clean(r.city),
+      city: normalizeCity(r.city),
       zip: cleanZip(r.zipcode),
-      county: clean(r.premisescounty),
+      county: cleanCounty(r.premisescounty),
       filedAt: safeDate(r.originalissuedate),
       issuedAt: safeDate(r.lastissuedate) ?? safeDate(r.effectivedate),
-      expiresAt: safeDate(r.expirationdate),
+      expiresAt: safeDate(r.expirationdate, { allowFutureYears: 10 }),
       lat,
       lng,
       sourceUrl: NY_ACTIVE_URL,

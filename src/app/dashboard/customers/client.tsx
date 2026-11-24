@@ -8,16 +8,19 @@ async function call(
   k: string,
   body: Record<string, unknown>
 ): Promise<Record<string, unknown>> {
-  const res = await fetch(`/api/admin/customers?key=${encodeURIComponent(k)}`, {
+  const res = await fetch("/api/admin/customers", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "x-admin-key": k,
+    },
     body: JSON.stringify(body),
   });
   return res.json().catch(() => ({ ok: false, error: "bad_response" }));
 }
 
 const btn =
-  "rounded-lg bg-amber px-5 py-3 font-mono text-sm font-bold tracking-[0.08em] text-ink hover:bg-amber/90 disabled:opacity-50";
+  "rounded-lg bg-amber px-5 py-3 font-mono text-sm font-bold tracking-[0.08em] text-[#140b0e] hover:bg-amber/90 disabled:opacity-50";
 const btnGhost =
   "rounded-lg border border-line bg-panel px-4 py-2.5 font-mono text-sm text-amber hover:border-amber/50";
 const input =

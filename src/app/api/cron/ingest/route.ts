@@ -1,10 +1,13 @@
-// Runs automatically every morning (see vercel.json). Can also be triggered
-// by hand from the control room. Pulls every source, records what is new.
+// Triggerable ingest endpoint (unified through ingest-aggregator).
+//   /api/cron/ingest?state=TX&force=1
+//   /api/cron/ingest?tier=fast|heavy|all
+//   /api/cron/ingest?source=tx-pending
 import { ensureSchema } from "@/db/bootstrap";
 import { cronAuthorized } from "@/lib/auth";
 import { ALL_SOURCES, runIngest, type SourceId } from "@/lib/ingest-run";
 import {
   ALL_STATE_SOURCES,
+  COVERED_STATES,
   runAllSources,
   runByState,
 } from "@/lib/ingest-aggregator";
@@ -19,42 +22,43 @@ export async function GET(req: Request) {
   await ensureSchema();
 
   const url = new URL(req.url);
-  const aggregator = url.searchParams.get("aggregator");
   const only = url.searchParams.get("source") as SourceId | null;
-  const state = url.searchParams.get("state");
+  const state = (url.searchParams.get("state") ?? "").trim().toUpperCase();
+  const force = url.searchParams.get("force") === "1";
+  const tierParam = url.searchParams.get("tier");
+  const tier: "fast" | "heavy" | "all" =
+    tierParam === "heavy" || tierParam === "all" ? tierParam : "fast";
 
-  if (aggregator === "true") {
-    const wanted = (state ?? "").trim().toUpperCase();
-    const force = url.searchParams.get("force") === "1";
-    if (wanted) {
-      const ran = await runByState(wanted, force);
-      return Response.json({
-        ok: true,
-        ranAt: new Date().toISOString(),
-        state: wanted,
-        ...ran,
-      });
-    }
-    const ran = await runAllSources(force);
+  if (only && ALL_SOURCES.includes(only)) {
+    const result = await runIngest(only);
+    return Response.json({
+      ok: result.ok,
+      ranAt: new Date().toISOString(),
+      results: [result],
+    });
+  }
+
+  if (state) {
+    const ran = await runByState(state, force);
     return Response.json({
       ok: true,
       ranAt: new Date().toISOString(),
+      state,
       ...ran,
     });
   }
 
-  const ids: SourceId[] =
-    only && ALL_SOURCES.includes(only) ? [only] : ALL_SOURCES;
-
-  const results = [];
-  for (const id of ids) {
-    results.push(await runIngest(id));
-  }
+  const ran = await runAllSources(force, {
+    tier,
+    budgetMs: 48_000,
+    concurrency: 4,
+  });
   return Response.json({
     ok: true,
     ranAt: new Date().toISOString(),
-    results,
-    source: "all-available",
-    configuredStates: ALL_STATE_SOURCES.map((s) => s.state),
+    tier,
+    configuredSources: ALL_STATE_SOURCES.length,
+    configuredStates: COVERED_STATES,
+    ...ran,
   });
 }

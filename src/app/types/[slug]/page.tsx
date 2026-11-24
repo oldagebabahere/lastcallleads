@@ -7,7 +7,7 @@ import { db } from "@/db";
 import { ensureSchema } from "@/db/bootstrap";
 import { events, licenses } from "@/db/schema";
 import { Footer, LeadRow, Nav, StatePill } from "@/components/ui";
-import { fmtDate } from "@/lib/fmt";
+import { embargoCutoff, maskName } from "@/lib/queries";
 import { TYPE_LIBRARY } from "@/lib/license-types";
 
 export const dynamic = "force-dynamic";
@@ -27,6 +27,7 @@ export async function generateMetadata({
   return {
     title: `${t.name} (${t.code}) in Texas — what it means, who needs it`,
     description: `${t.oneLiner} Live count of pending ${t.code} applications in Texas right now, plus the latest filings.`,
+    alternates: { canonical: `/types/${t.slug}` },
   };
 }
 
@@ -39,18 +40,16 @@ export default async function TypePage({
   const t = TYPE_LIBRARY.find((x) => x.slug === slug);
   if (!t) notFound();
 
-  await ensureSchema();
   let pending = 0;
   let active = 0;
   let recent: (typeof events.$inferSelect)[] = [];
   try {
+    await ensureSchema();
     const [counts, rows] = await Promise.all([
       db
         .select({ kind: licenses.kind, n: sql<number>`count(*)::int` })
         .from(licenses)
-        .where(
-          and(eq(licenses.state, "TX"), eq(licenses.licenseType, t.code))
-        )
+        .where(and(eq(licenses.state, "TX"), eq(licenses.licenseType, t.code)))
         .groupBy(licenses.kind),
       db
         .select()
@@ -66,6 +65,8 @@ export default async function TypePage({
     // live numbers are a garnish; the explainer always renders
   }
 
+  const cut = embargoCutoff();
+
   const jsonLd = {
     "@context": "https://schema.org",
     "@type": "FAQPage",
@@ -79,10 +80,16 @@ export default async function TypePage({
   return (
     <main className="min-h-screen">
       <Nav />
-      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+      />
 
-      <div className="mx-auto max-w-4xl px-5 pt-28 pb-20">
-        <Link href="/types" className="inline-flex items-center gap-2 font-mono text-[11px] tracking-[0.15em] text-smoke hover:text-cream">
+      <div className="mx-auto max-w-4xl px-5 pb-20 pt-28">
+        <Link
+          href="/types"
+          className="inline-flex items-center gap-2 font-mono text-[11px] tracking-[0.15em] text-smoke hover:text-cream"
+        >
           <ArrowLeft className="h-3.5 w-3.5" /> ALL LICENSE TYPES
         </Link>
 
@@ -91,7 +98,9 @@ export default async function TypePage({
             {t.code}
           </span>
           <StatePill state={t.state} />
-          <span className="font-mono text-[11px] tracking-[0.15em] text-faint">TEXAS LICENSE CODES</span>
+          <span className="font-mono text-[11px] tracking-[0.15em] text-faint">
+            TEXAS LICENSE CODES
+          </span>
         </div>
 
         <h1 className="font-display mt-5 text-4xl font-medium leading-tight sm:text-5xl">
@@ -117,11 +126,13 @@ export default async function TypePage({
 
         <div className="mt-10 space-y-5">
           {t.body.map((p, i) => (
-            <p key={i} className="text-base leading-[1.85] text-smoke">{p}</p>
+            <p key={i} className="text-base leading-[1.85] text-smoke">
+              {p}
+            </p>
           ))}
         </div>
 
-        {/* live filings of this type */}
+        {/* live filings of this type (embargo enforced!) */}
         <div className="mt-12">
           <h2 className="font-mono text-[11px] tracking-[0.28em] text-faint">
             LATEST {t.code} FILINGS · TEXAS
@@ -129,16 +140,24 @@ export default async function TypePage({
           <div className="mt-4 overflow-hidden rounded-xl border border-line">
             {recent.length === 0 && (
               <p className="px-6 py-8 font-mono text-xs leading-relaxed text-smoke">
-                No recent {t.code} filings in the feed yet — the machine sweeps every
-                morning, and counts fill in as filings land.
+                No recent {t.code} filings in the feed yet — the machine sweeps every morning, and
+                counts fill in as filings land.
               </p>
             )}
-            {recent.map((e) => (
-              <LeadRow key={e.id} e={e} locked={false} />
-            ))}
+            {recent.map((e) => {
+              const locked = e.occurredAt ? e.occurredAt.getTime() > cut.getTime() : false;
+              const row = locked
+                ? {
+                    ...e,
+                    tradeName: maskName(e.tradeName ?? e.ownerName ?? "Applicant"),
+                    ownerName: null,
+                  }
+                : e;
+              return <LeadRow key={e.id} e={row} locked={locked} />;
+            })}
           </div>
           <Link
-            href={`/feed?state=TX`}
+            href="/feed?state=TX"
             className="mt-4 inline-flex items-center gap-1.5 font-mono text-[11px] tracking-[0.15em] text-amber hover:underline"
           >
             OPEN THE FULL TEXAS FEED <ArrowRight className="h-3 w-3" />
@@ -151,14 +170,20 @@ export default async function TypePage({
             <span className="italic text-amber"> you will know the same morning.</span>
           </p>
           <p className="mt-2 text-sm leading-relaxed text-smoke">
-            Subscribers get every new filing — this type and all the others — in their
-            inbox before the venue has picked a single supplier.
+            Subscribers get every new filing — this type and all the others — in their inbox before
+            the venue has picked a single supplier.
           </p>
           <div className="mt-5 flex flex-wrap gap-4">
-            <Link href="/#pricing" className="rounded-full bg-amber px-6 py-3 font-mono text-[11px] font-semibold tracking-[0.12em] text-ink transition-transform hover:scale-[1.03]">
-              GET THE ALERTS
+            <Link
+              href="/#pricing"
+              className="rounded-full bg-amber px-6 py-3 font-mono text-[11px] font-semibold tracking-[0.12em] text-[#140b0e] transition-transform hover:scale-[1.03]"
+            >
+              START 7-DAY FREE TRIAL
             </Link>
-            <Link href="/states/texas" className="rounded-full border border-line px-6 py-3 font-mono text-[11px] tracking-[0.12em] text-smoke hover:text-cream">
+            <Link
+              href="/states/texas"
+              className="rounded-full border border-line px-6 py-3 font-mono text-[11px] tracking-[0.12em] text-smoke hover:text-cream"
+            >
               TEXAS COVERAGE →
             </Link>
           </div>
@@ -171,7 +196,9 @@ export default async function TypePage({
               <details key={f.q} className="group py-5">
                 <summary className="flex cursor-pointer list-none items-center justify-between gap-4 text-base font-medium text-cream">
                   {f.q}
-                  <span className="font-mono text-amber transition-transform group-open:rotate-45">+</span>
+                  <span className="font-mono text-amber transition-transform group-open:rotate-45">
+                    +
+                  </span>
                 </summary>
                 <p className="mt-3 pr-8 text-sm leading-relaxed text-smoke">{f.a}</p>
               </details>

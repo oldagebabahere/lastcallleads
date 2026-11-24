@@ -1,15 +1,14 @@
-// Auto-generated lead sheet — the machine's answer to "where do I get leads?"
-// Every week it finds counties with NEW filings, then lists the wholesalers &
-// distributors ALREADY LICENSED in those same counties. Those are the people
-// who most want to know about new venues in their territory — today.
+// Auto-generated lead sheet — finds counties with new pending filings in any
+// covered state and pairs them with licensed wholesalers/distributors in those counties.
 import { db } from "@/db";
-import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, or, sql } from "drizzle-orm";
 import { events, licenses } from "@/db/schema";
 
 export type LeadSheetRow = {
   county: string;
   filings: number;
-  distributors: string[];
+  distributors: { name: string; city: string | null; phone: string | null }[];
+  // Legacy flat fields preserved for backwards compatibility
   phones: (string | null)[];
 };
 
@@ -20,14 +19,13 @@ export type LeadSheet = {
   counties: LeadSheetRow[];
 };
 
-// TX prospect license codes: W (wholesaler), LP (local distributor),
-// B (brewer), BP (brewpub) — the people who buy placements into venues.
-const PROSPECT_TYPES = ["W", "LP", "B", "BP"];
+const TX_PROSPECT_TYPES = ["W", "LP", "B", "BP"];
 
 export async function buildLeadSheet(
-  state: "TX" | "NY" = "TX",
+  state = "TX",
   days = 7
 ): Promise<LeadSheet> {
+  const st = state.trim().toUpperCase() || "TX";
   const since = new Date(Date.now() - days * 86_400_000);
 
   const countyCounts = await db
@@ -35,9 +33,10 @@ export async function buildLeadSheet(
     .from(events)
     .where(
       and(
-        eq(events.state, state),
+        eq(events.state, st),
         eq(events.eventType, "NEW_PENDING"),
-        gte(events.occurredAt, since)
+        gte(events.occurredAt, since),
+        sql`coalesce(${events.licenseKey}, '') NOT LIKE 'TTB-%'`
       )
     )
     .groupBy(events.county)
@@ -49,38 +48,50 @@ export async function buildLeadSheet(
     .map((r) => r.county as string);
 
   let distributorRows: (typeof licenses.$inferSelect)[] = [];
-  if (hotCounties.length && state === "TX") {
+  if (hotCounties.length) {
+    const lowerCounties = hotCounties.map((c) => c.toLowerCase());
     distributorRows = await db
       .select()
       .from(licenses)
       .where(
         and(
-          eq(licenses.state, state),
+          eq(licenses.state, st),
           eq(licenses.kind, "active"),
-          inArray(licenses.licenseType, PROSPECT_TYPES),
-          inArray(licenses.county, hotCounties)
+          or(
+            st === "TX" ? inArray(licenses.licenseType, TX_PROSPECT_TYPES) : undefined,
+            sql`lower(coalesce(${licenses.typeName}, '')) LIKE '%wholesal%'`,
+            sql`lower(coalesce(${licenses.typeName}, '')) LIKE '%distribut%'`
+          ),
+          sql`lower(coalesce(${licenses.county}, '')) = ANY(${lowerCounties})`
         )
-      );
+      )
+      .limit(500);
   }
 
   const counties: LeadSheetRow[] = countyCounts
     .filter((r) => r.county)
     .map((r) => {
-      const inCounty = distributorRows.filter(
-        (d) => (d.county ?? "").toLowerCase() === (r.county as string).toLowerCase()
-      );
+      const target = (r.county as string).toLowerCase();
+      const seen = new Set<string>();
+      const distributors: { name: string; city: string | null; phone: string | null }[] = [];
+      for (const d of distributorRows) {
+        if ((d.county ?? "").toLowerCase() !== target) continue;
+        const name = d.tradeName ?? d.ownerName ?? "Unnamed company";
+        const key = name.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        distributors.push({ name, city: d.city, phone: d.phone });
+      }
       return {
         county: r.county as string,
         filings: r.n,
-        distributors: [...new Set(
-          inCounty.map((d) => d.tradeName ?? d.ownerName ?? "Unnamed company")
-        )],
-        phones: inCounty.map((d) => d.phone),
+        distributors,
+        phones: distributors.map((d) => d.phone),
       };
     });
 
   return {
-    state,
+    state: st,
     days,
     newFilings: countyCounts.reduce((a, b) => a + b.n, 0),
     counties,

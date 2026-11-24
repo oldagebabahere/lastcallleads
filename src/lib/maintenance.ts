@@ -1,17 +1,20 @@
-// Weekly long-term housekeeping and watchdog.
-// Keeps cheap tables small, removes bulky debug snapshots after 90 days,
-// and alerts the owner if a government source silently stopped updating.
+// Weekly database housekeeping and staleness watchdog.
+// Keeps Supabase / Neon 500MB free tier permanently lean (<100MB) by pruning
+// legacy TTB/removed-state rows, old logs, and old payloads automatically!
 import { pool } from "@/db";
-import { Resend } from "resend";
 import { alertFrom } from "@/lib/email";
-import { runBriefings } from "@/lib/digest";
+import { isMailTransportConfigured, sendTransactionalMail } from "@/lib/mailer";
+import { sendTelegramOwner } from "@/lib/notify";
 import { BRAND } from "@/lib/brand";
-import { ALL_STATE_SOURCES } from "@/lib/ingest-aggregator";
+import { ALL_STATE_SOURCES, HEAVY_SOURCE_LABELS } from "@/lib/ingest-aggregator";
+import { LIVE_STATE_CODES } from "@/lib/states";
 
 export type MaintenanceReport = {
   ok: boolean;
   prunedRuns: number;
   prunedEmails: number;
+  prunedWebhooks: number;
+  prunedLegacyRows: number;
   compactedEvents: number;
   purgedBadDates: number;
   staleSources: string[];
@@ -24,34 +27,60 @@ type SourceRow = { source: string; last_ok: Date | string | null };
 type SizeRow = { bytes: number | string };
 
 export async function runMaintenance(): Promise<MaintenanceReport> {
-  // Every Monday also deliver the weekly territory briefing to active subs.
-  try {
-    const briefing = await runBriefings();
-    if (!briefing.ok) {
-      await pool.query(
-        `INSERT INTO email_log (to_email, subject, status, detail, event_count)
-         VALUES ($1, $2, 'error', $3, 0)`,
-        ["ops@internal", "Weekly briefing failed", String(briefing)]
-      );
-    }
-  } catch {
-    // Briefing must never block maintenance.
-  }
-
+  // 1) Compact older JSON payloads to save massive disk space on 500MB free tiers.
   const compact = await pool.query<CountRow>(`
     WITH changed AS (
       UPDATE events
       SET payload = NULL
       WHERE payload IS NOT NULL
-        AND detected_at < now() - interval '90 days'
+        AND detected_at < now() - interval '45 days'
       RETURNING 1
     ) SELECT count(*)::int AS n FROM changed
   `);
 
+  // 2) Purge old TTB federal filler + non-live states from previous builds (frees 70%+ DB space!)
+  const liveListSql = LIVE_STATE_CODES.map((s) => `'${s}'`).join(", ");
+  const [legacyLic, legacyEvt, legacyPros] = await Promise.all([
+    pool
+      .query<CountRow>(`
+        WITH deleted AS (
+          DELETE FROM licenses
+          WHERE license_key LIKE 'TTB-%'
+             OR state NOT IN (${liveListSql})
+          RETURNING 1
+        ) SELECT count(*)::int AS n FROM deleted
+      `)
+      .catch(() => ({ rows: [{ n: 0 }] })),
+    pool
+      .query<CountRow>(`
+        WITH deleted AS (
+          DELETE FROM events
+          WHERE license_key LIKE 'TTB-%'
+             OR state NOT IN (${liveListSql})
+          RETURNING 1
+        ) SELECT count(*)::int AS n FROM deleted
+      `)
+      .catch(() => ({ rows: [{ n: 0 }] })),
+    pool
+      .query<CountRow>(`
+        WITH deleted AS (
+          DELETE FROM prospects
+          WHERE state NOT IN (${liveListSql})
+             OR category = 'bar'
+          RETURNING 1
+        ) SELECT count(*)::int AS n FROM deleted
+      `)
+      .catch(() => ({ rows: [{ n: 0 }] })),
+  ]);
+  const prunedLegacyRows =
+    Number(legacyLic.rows[0]?.n ?? 0) +
+    Number(legacyEvt.rows[0]?.n ?? 0) +
+    Number(legacyPros.rows[0]?.n ?? 0);
+
   const oldRuns = await pool.query<CountRow>(`
     WITH deleted AS (
       DELETE FROM ingest_runs
-      WHERE started_at < now() - interval '180 days'
+      WHERE started_at < now() - interval '60 days'
       RETURNING 1
     ) SELECT count(*)::int AS n FROM deleted
   `);
@@ -59,19 +88,26 @@ export async function runMaintenance(): Promise<MaintenanceReport> {
   const oldEmails = await pool.query<CountRow>(`
     WITH deleted AS (
       DELETE FROM email_log
-      WHERE created_at < now() - interval '180 days'
+      WHERE created_at < now() - interval '60 days'
       RETURNING 1
     ) SELECT count(*)::int AS n FROM deleted
   `);
 
-  // Purge corrupt events imported before the date-sanity guard existed —
-  // anything dated in the future (e.g. Colorado's "2262" issue dates) or
-  // implausibly old. These poison the top of the feed because it sorts by
-  // occurred_at descending.
+  const oldWebhooks = await pool
+    .query<CountRow>(`
+      WITH deleted AS (
+        DELETE FROM webhook_events
+        WHERE processed_at < now() - interval '60 days'
+        RETURNING 1
+      ) SELECT count(*)::int AS n FROM deleted
+    `)
+    .catch(() => ({ rows: [{ n: 0 }] }));
+
+  // Purge corrupt events with future (>7d) or pre-1990 dates.
   const badDates = await pool.query<CountRow>(`
     WITH deleted AS (
       DELETE FROM events
-      WHERE occurred_at > now() + interval '1 day'
+      WHERE occurred_at > now() + interval '7 days'
          OR occurred_at < timestamp '1990-01-01'
       RETURNING 1
     ) SELECT count(*)::int AS n FROM deleted
@@ -82,14 +118,13 @@ export async function runMaintenance(): Promise<MaintenanceReport> {
     FROM ingest_runs
     GROUP BY source
   `);
-  const cutoff = Date.now() - 48 * 60 * 60 * 1000;
-  // The daily cron runs the aggregator, so the labels it logs are what we
-  // expect to see fresh. (Legacy runner ids are gone from the schedule.)
+  const now = Date.now();
   const expected = ALL_STATE_SOURCES.map((s) => s.label);
   const bySource = new Map(sourceRows.rows.map((r) => [r.source, r.last_ok]));
   const staleSources = expected.filter((source) => {
+    const maxHours = HEAVY_SOURCE_LABELS.has(source) ? 96 : 48;
     const date = bySource.get(source);
-    return !date || new Date(date).getTime() < cutoff;
+    return !date || new Date(date).getTime() < now - maxHours * 3600_000;
   });
 
   let databaseBytes: number | null = null;
@@ -99,33 +134,38 @@ export async function runMaintenance(): Promise<MaintenanceReport> {
     );
     databaseBytes = Number(size.rows[0]?.bytes ?? 0);
   } catch {
-    // Some hosted Postgres roles do not expose database-size functions.
+    // Some hosted Postgres roles restrict database-size functions.
   }
 
   let warningSent = false;
-  const opsEmail = process.env.OPS_EMAIL;
-  const resendKey = process.env.RESEND_API_KEY;
-  if (staleSources.length && opsEmail && resendKey) {
-    const resend = new Resend(resendKey);
-    const result = await resend.emails.send({
-      from: alertFrom(),
-      to: opsEmail,
-      subject: `Action needed: ${BRAND.name} source sweep is stale`,
-      html: `<div style="font-family:Arial,sans-serif;max-width:620px;margin:auto;padding:24px">
-        <h2>${BRAND.name} watchdog found a problem</h2>
-        <p>The following public-data sources have not completed successfully in 48 hours:</p>
-        <p><strong>${staleSources.join(", ")}</strong></p>
-        <p>Open your private control room, review Source Health, then run the affected source manually. Government portals occasionally change a field or pause publishing.</p>
-        <p style="color:#666;font-size:12px">This is an automated operations alert.</p>
-      </div>`,
-    });
-    warningSent = !result.error;
+  const opsEmail = (process.env.OPS_EMAIL ?? process.env.SMTP_USER ?? "").trim();
+  if (staleSources.length) {
+    await sendTelegramOwner(
+      `⚠️ ${BRAND.name} Watchdog: ${staleSources.length} feed(s) stale:\n${staleSources.join(", ")}`
+    ).catch(() => undefined);
+
+    if (opsEmail && isMailTransportConfigured()) {
+      const res = await sendTransactionalMail({
+        from: alertFrom(),
+        to: opsEmail,
+        subject: `Action needed: ${BRAND.name} source sweep is stale`,
+        html: `<div style="font-family:Arial,sans-serif;max-width:620px;margin:auto;padding:24px">
+          <h2>${BRAND.name} watchdog report</h2>
+          <p>The following public-data sources have not completed within their expected window:</p>
+          <p><strong>${staleSources.join(", ")}</strong></p>
+          <p>PourWatch auto-healer will retry them automatically on the next daily sweep.</p>
+        </div>`,
+      });
+      warningSent = res.status === "sent";
+    }
   }
 
   return {
     ok: staleSources.length === 0,
     prunedRuns: Number(oldRuns.rows[0]?.n ?? 0),
     prunedEmails: Number(oldEmails.rows[0]?.n ?? 0),
+    prunedWebhooks: Number(oldWebhooks.rows[0]?.n ?? 0),
+    prunedLegacyRows,
     compactedEvents: Number(compact.rows[0]?.n ?? 0),
     purgedBadDates: Number(badDates.rows[0]?.n ?? 0),
     staleSources,

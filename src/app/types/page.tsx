@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import type { Metadata } from "next";
-import { eq, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { ensureSchema } from "@/db/bootstrap";
 import { licenses } from "@/db/schema";
@@ -14,6 +14,7 @@ export const metadata: Metadata = {
   title: "Texas liquor license types explained — MB, FB, LH, P and more",
   description:
     "Every Texas liquor license code decoded in plain English: what Mixed Beverage, Package Store, Late Hours and the rest mean — with live filing counts for each.",
+  alternates: { canonical: "/types" },
 };
 
 export default async function TypesIndex() {

@@ -1,45 +1,121 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ArrowRight, Mail } from "lucide-react";
-import { desc, sql } from "drizzle-orm";
+import { Building2, Mail, MapPin, Search } from "lucide-react";
+import { and, desc, eq, lte, notLike } from "drizzle-orm";
 import { db } from "@/db";
 import { ensureSchema } from "@/db/bootstrap";
 import { events } from "@/db/schema";
 import Reveal from "@/components/reveal";
 import SubscribeForm from "@/components/subscribe-form";
+import OutreachKit from "@/components/outreach-kit";
 import { Footer, Nav } from "@/components/ui";
-import { scoreFiling } from "@/lib/lead-score";
+import { buildBeverageDossier, parseEventMeta } from "@/lib/beverage-intel";
+import { isJunkEntity, scoreFiling } from "@/lib/lead-score";
+import { embargoCutoff } from "@/lib/queries";
+import { LIVE_MARKETS } from "@/lib/states";
 
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "See a real digest — what lands in your inbox every morning",
+  title: "Sample morning beverage dossier — what lands in your inbox",
   description:
-    "A real example of the daily Last Call Leads email: every newly filed bar, restaurant and package store in your territory, with the lead-quality flag and why it matters.",
+    "Inspect an exact Last Call Leads morning email: venue name, street address, legal LLC, direct phone (where filed), beverage program fit, 1-click owner search & pitch script.",
+  alternates: { canonical: "/sample" },
 };
 
-type Evt = {
+type SampleRow = {
   id: number;
   state: string;
   eventType: string;
   tradeName: string | null;
   ownerName: string | null;
   city: string | null;
+  county: string | null;
   typeName: string | null;
   occurredAt: Date | null;
+  payload: string | null;
 };
 
-const HOT_PATTERN = /mixed beverage|package|liquor|full service|bar|restaurant|brewpub|tavern/i;
-
-function isHot(e: Evt): boolean {
-  return HOT_PATTERN.test(`${e.typeName ?? ""}`);
-}
+// Realistic showcase examples used only before the first sweep populates unlocked rows.
+const SHOWCASE_EXAMPLES: SampleRow[] = [
+  {
+    id: 1001,
+    state: "TX",
+    eventType: "NEW_PENDING",
+    tradeName: "La Llorona Cantina",
+    ownerName: "La Llorona Hospitality LLC",
+    city: "Katy",
+    county: "Harris",
+    typeName: "Mixed Beverage Permit (Full Bar) + Late Hours",
+    occurredAt: null,
+    payload: JSON.stringify({
+      address: "19128 W Little York Rd",
+      zip: "77449",
+      licenseType: "MB",
+      sourceUrl: "https://data.texas.gov/d/mxm5-tdpj",
+    }),
+  },
+  {
+    id: 1002,
+    state: "NY",
+    eventType: "NEW_PENDING",
+    tradeName: "Baku Palace Lounge",
+    ownerName: "MSR Baku International Inc",
+    city: "Brooklyn",
+    county: "Kings",
+    typeName: "On-Premises Restaurant Liquor",
+    occurredAt: null,
+    payload: JSON.stringify({
+      address: "2001 Emmons Avenue",
+      zip: "11235",
+      licenseType: "OP",
+      sourceUrl: "https://data.ny.gov/d/f8i8-k2gm",
+    }),
+  },
+  {
+    id: 1003,
+    state: "CT",
+    eventType: "NEW_PENDING",
+    tradeName: "Harbor House Tavern",
+    ownerName: "Harbor Hospitality Group LLC",
+    city: "Stamford",
+    county: "Fairfield",
+    typeName: "Restaurant Liquor",
+    occurredAt: null,
+    payload: JSON.stringify({
+      address: "142 Main St",
+      zip: "06901",
+      contactName: "Danielle Filardi",
+      licenseType: "LIR",
+      sourceUrl: "https://data.ct.gov/d/gwv2-eswx",
+    }),
+  },
+  {
+    id: 1004,
+    state: "WA",
+    eventType: "NEW_LICENSE",
+    tradeName: "Ballard Craft Bottle Shop",
+    ownerName: "Ballard Beverage Ventures LLC",
+    city: "Seattle",
+    county: "King",
+    typeName: "Spirits / Beer / Wine Retail Package",
+    occurredAt: null,
+    payload: JSON.stringify({
+      address: "2003 Western Ave Ste 110C",
+      zip: "98121",
+      phone: "(206) 555-0194",
+      contactName: "Jason Mercer",
+      sourceUrl: "https://data.wa.gov/d/9dee-kzm5",
+    }),
+  },
+];
 
 export default async function SamplePage() {
-  await ensureSchema();
+  let rows: SampleRow[] = [];
+  let isLiveSample = false;
 
-  let rows: Evt[] = [];
   try {
+    await ensureSchema();
     const raw = await db
       .select({
         id: events.id,
@@ -48,250 +124,228 @@ export default async function SamplePage() {
         tradeName: events.tradeName,
         ownerName: events.ownerName,
         city: events.city,
+        county: events.county,
         typeName: events.typeName,
         occurredAt: events.occurredAt,
+        payload: events.payload,
       })
       .from(events)
-      .where(sql`${events.eventType} = 'NEW_PENDING'`)
+      .where(
+        and(
+          eq(events.eventType, "NEW_PENDING"),
+          notLike(events.licenseKey, "TTB-%"),
+          lte(events.occurredAt, embargoCutoff())
+        )
+      )
       .orderBy(desc(events.occurredAt))
-      .limit(6);
-    rows = raw as unknown as Evt[];
+      .limit(18);
+    rows = (raw as unknown as SampleRow[])
+      .filter((e) => !isJunkEntity(e.tradeName, e.ownerName, e.typeName))
+      .slice(0, 5);
+    if (rows.length > 0) isLiveSample = true;
   } catch {
     rows = [];
   }
 
-  const hotCount = rows.filter(isHot).length;
-  // Subject line reflects the states actually present in this sample.
-  const stateList = Array.from(new Set(rows.map((r) => r.state)));
-  const stateLabel = stateList.length ? stateList.join(" + ") : "TX + NY";
-  const count = rows.length || 4;
-  const subject = `${count} new filing${count === 1 ? "" : "s"} — ${stateLabel}`;
+  const displayRows = rows.length > 0 ? rows : SHOWCASE_EXAMPLES;
 
-  // Apply the same scoring the real digest uses, then rank best-first.
-  const scored = rows.map((e) => ({
-    e,
-    score: scoreFiling({
-      eventType: e.eventType,
-      typeName: e.typeName,
-      city: e.city,
-      occurredAt: e.occurredAt,
-    }),
-  }));
-  const ranked = [...scored].sort((a, b) => b.score.value - a.score.value);
-  const top = ranked[0];
+  const enriched = displayRows
+    .map((e) => {
+      const meta = parseEventMeta(e.payload);
+      const score = scoreFiling({
+        eventType: e.eventType,
+        typeName: e.typeName,
+        city: e.city,
+        county: e.county,
+        occurredAt: e.occurredAt,
+      });
+      const dossier = buildBeverageDossier({
+        state: e.state,
+        eventType: e.eventType,
+        tradeName: e.tradeName,
+        ownerName: e.ownerName,
+        contactName: meta.contactName,
+        address: meta.address,
+        city: e.city,
+        zip: meta.zip,
+        county: e.county,
+        neighborhood: meta.neighborhood,
+        typeName: e.typeName,
+        licenseType: meta.licenseType,
+        sourceUrl: meta.sourceUrl,
+        occurredAt: e.occurredAt,
+      });
+      return { e, meta, score, dossier };
+    })
+    .sort((a, b) => b.score.value - a.score.value);
+
+  const top = enriched[0];
+  const stateLabel = Array.from(new Set(displayRows.map((r) => r.state))).join(" + ");
+  const subject = `${displayRows.length} new beverage leads — ${stateLabel}`;
 
   return (
     <main className="min-h-screen">
       <Nav />
       <div className="mx-auto max-w-3xl px-5 pb-20 pt-28">
-        <p className="eyebrow">[ Sample digest ]</p>
+        <p className="eyebrow">
+          [ Sample morning dossier · {isLiveSample ? "real unlocked filings" : "exact email format"} ]
+        </p>
         <h1 className="font-display mt-5 text-3xl font-medium leading-tight sm:text-4xl">
-          This is the exact email you get each morning.
+          Not a raw spreadsheet — a ready-to-call beverage dossier every morning.
         </h1>
         <p className="mt-4 max-w-xl text-base leading-relaxed text-smoke">
-          Real formatting, real fields. One short read — then you make calls.
+          Every morning email includes street address, legal LLC entity, named permittee/phone
+          (where published), beverage program fit, 1-click owner lookup, and CRM CSV export across
+          our {LIVE_MARKETS.length} verified markets.
         </p>
 
-        {/* the email mock */}
+        {/* Email preview */}
         <Reveal>
           <div className="mt-10 overflow-hidden rounded-xl border border-line bg-wine-grad">
-            {/* email client header */}
-            <div className="border-b border-line/70 px-5 py-3">
+            <div className="border-b border-line/70 px-5 py-3.5">
               <div className="flex items-start gap-3">
                 <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-amber/40 bg-amber/10">
                   <Mail className="h-4 w-4 text-amber" />
                 </span>
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-cream">
-                    Last Call Leads Alerts
-                  </p>
+                  <p className="text-sm font-medium text-cream">Last Call Leads Alerts</p>
                   <p className="font-mono text-[11px] text-faint">
-                    alerts@lastcallleads.com → you@yourcompany.com
+                    alerts@lastcallleads.com → you@distributor.com
                   </p>
                 </div>
-                <span className="shrink-0 font-mono text-[10px] text-faint">
-                  6:30 AM
-                </span>
+                <span className="shrink-0 font-mono text-[10px] text-faint">6:30 AM</span>
               </div>
-              <p className="mt-3 font-display text-lg font-medium text-cream">
-                {subject}
-              </p>
+              <p className="mt-3 font-display text-lg font-medium text-cream">{subject}</p>
             </div>
 
-            {/* subject line shown on mobile-ish */}
-            <div className="border-b border-line/70 bg-ink/40 px-5 py-3">
-              <p className="font-mono text-[10px] tracking-[0.12em] text-faint">
-                SUBJECT LINE
-              </p>
-              <p className="mt-1 font-mono text-sm text-cream">{subject}</p>
-            </div>
-
-            {/* body */}
             <div className="px-5 py-6">
-              <p className="font-display text-xl font-medium text-cream">
-                {count} new filing{count === 1 ? "" : "s"} in your territories
-              </p>
-              <p className="mt-2 text-sm leading-relaxed text-smoke">
-                {hotCount > 0 ? (
-                  <>
-                    <span className="font-semibold text-amber">
-                      {hotCount} are priority leads
-                    </span>{" "}
-                    — scored and ranked so you know exactly who to call.
-                  </>
-                ) : (
-                  "Applications filed = buyers deciding in the next 60–90 days. Call first."
-                )}
-              </p>
-
-              {/* Call-this-one-first block — same as the real digest */}
               {top && (
-                <div className="mt-5 rounded-xl border border-amber/50 bg-panel p-5">
-                  <p className="font-mono text-[10px] tracking-[0.2em] text-amber">
-                    ★ CALL THIS ONE FIRST — SCORE {top.score.value}/100
+                <div className="mb-6 rounded-xl border border-amber/50 bg-panel p-5">
+                  <p className="font-mono text-[10px] tracking-[0.18em] text-amber">
+                    ★ CALL THIS ONE FIRST — SCORE {top.score.value}/100 ·{" "}
+                    {top.dossier.estAnnualSpend.toUpperCase()}
                   </p>
-                  <p className="font-display mt-2 text-lg font-medium text-cream">
-                    {top.e.tradeName ?? top.e.ownerName ?? "New venue"}
-                    {top.e.city ? ` (${top.e.city})` : ""}
+                  <p className="font-display mt-2 text-xl font-medium text-cream">
+                    {top.e.tradeName ?? top.e.ownerName}
+                    {top.e.city ? ` (${top.e.city}, ${top.e.state})` : ""}
                   </p>
-                  <p className="mt-1 font-mono text-[11px] leading-relaxed text-smoke">
-                    {top.score.reason}
-                  </p>
-                  <p className="mt-2 font-mono text-[11px] text-amber">
-                    → {top.score.action}
+                  {top.meta.address && (
+                    <p className="mt-1 font-mono text-xs text-cream/85">
+                      📍 {[top.meta.address, top.e.city, top.e.state, top.meta.zip].filter(Boolean).join(", ")}
+                      {top.e.ownerName ? ` · Entity: ${top.e.ownerName}` : ""}
+                    </p>
+                  )}
+                  <p className="mt-2 text-xs leading-relaxed text-smoke">
+                    {top.dossier.pitchAngle}
                   </p>
                 </div>
               )}
 
-              {/* table header */}
-              <div className="mt-6 hidden grid-cols-[64px_90px_1fr_44px] gap-2 border-b border-line pb-2 font-mono text-[9px] tracking-[0.15em] text-faint sm:grid">
-                <span>DATE</span>
-                <span>SIGNAL</span>
-                <span>FILING</span>
-                <span>ST</span>
-              </div>
-
-              {/* rows */}
               <div className="divide-y divide-line/60">
-                {rows.length === 0 && (
-                  <div className="py-10 text-center">
-                    <p className="text-sm text-cream">
-                      Live examples appear here after the daily sweep.
-                    </p>
-                    <p className="mt-2 font-mono text-[10px] tracking-[0.2em] text-faint">
-                      9 STATES · 32,000+ RECORDS MONITORED
-                    </p>
-                  </div>
-                )}
-
-                {ranked.map(({ e, score }) => {
-                  const hot = score.value >= 70;
-                  const name = e.tradeName ?? e.ownerName ?? "New venue";
-                  const date = e.occurredAt
-                    ? new Date(e.occurredAt).toLocaleDateString("en-US", {
-                        month: "short",
-                        day: "numeric",
-                      })
-                    : "";
+                {enriched.map(({ e, meta, score, dossier }) => {
+                  const fullAddr = [meta.address, e.city, e.state, meta.zip]
+                    .filter(Boolean)
+                    .join(", ");
                   return (
-                    <div
-                      key={e.id}
-                      className="grid gap-2 py-4 sm:grid-cols-[64px_90px_1fr_44px]"
-                    >
-                      <span className="font-mono text-[11px] text-faint">
-                        {date}
-                      </span>
-                      <span className="font-mono text-[10px] tracking-[0.12em]">
-                        <span
-                          className={
-                            e.eventType === "NEW_PENDING"
-                              ? "text-amber"
-                              : "text-leaf"
-                          }
+                    <div key={e.id} className="py-4">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-base font-medium text-cream">
+                          {e.tradeName ?? e.ownerName}
+                        </span>
+                        <span className="font-mono text-[10px] tracking-[0.14em]">
+                          <span className={e.eventType === "NEW_PENDING" ? "text-amber" : "text-leaf"}>
+                            {e.eventType === "NEW_PENDING" ? "FILED" : "ISSUED"}
+                          </span>
+                          <span className="ml-2 rounded-full border border-amber/50 bg-amber/15 px-2 py-0.5 text-[9px] font-bold text-amber">
+                            SCORE {score.value}
+                          </span>
+                        </span>
+                      </div>
+                      {fullAddr && (
+                        <p className="mt-1 flex items-center gap-1.5 text-xs text-cream/85">
+                          <MapPin className="h-3 w-3 shrink-0 text-amber" />
+                          {fullAddr}
+                        </p>
+                      )}
+                      {(e.ownerName || meta.contactName || meta.phone) && (
+                        <p className="mt-1 font-mono text-[11px] text-amber">
+                          {[
+                            meta.contactName ? `Contact: ${meta.contactName}` : null,
+                            e.ownerName ? `LLC: ${e.ownerName}` : null,
+                            meta.phone ? `Tel: ${meta.phone}` : null,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </p>
+                      )}
+                      <p className="mt-1.5 text-xs text-smoke">
+                        <strong className="text-cream">{dossier.archetype}</strong> ·{" "}
+                        {e.typeName ?? "Liquor license"}
+                      </p>
+                      <p className="mt-1 text-xs text-faint">
+                        Beverage fit: {dossier.beverageProgram}
+                      </p>
+                      <div className="mt-2.5 flex flex-wrap gap-3 font-mono text-[10px] text-amber">
+                        <a
+                          href={dossier.links.streetView}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 hover:underline"
                         >
-                          {e.eventType === "NEW_PENDING" ? "FILED" : "ISSUED"}
-                        </span>
-                        <span
-                          className={`ml-2 rounded-full border px-2 py-0.5 text-[9px] font-bold ${
-                            hot
-                              ? "border-amber/50 bg-amber/15 text-amber"
-                              : "border-line bg-panel2/60 text-smoke"
-                          }`}
+                          <MapPin className="h-3 w-3" /> STREET VIEW ↗
+                        </a>
+                        <a
+                          href={dossier.links.linkedinOwner}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 hover:underline"
                         >
-                          {score.value}
-                        </span>
-                      </span>
-                      <span className="min-w-0">
-                        <span className="block text-sm text-cream">
-                          {name}
-                          {e.city ? ` (${e.city})` : ""}
-                        </span>
-                        <span className="mt-0.5 block font-mono text-[11px] text-smoke">
-                          {e.typeName ?? "Liquor license"}
-                        </span>
-                        <span className="mt-1 block text-[11px] leading-relaxed text-faint">
-                          → {score.reason}
-                        </span>
-                      </span>
-                      <span className="font-mono text-[11px] text-faint">
-                        {e.state}
-                      </span>
+                          <Search className="h-3 w-3" /> FIND OWNER (LINKEDIN) ↗
+                        </a>
+                        <a
+                          href={dossier.links.entityLookup}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 hover:underline"
+                        >
+                          <Building2 className="h-3 w-3" /> LLC LOOKUP ↗
+                        </a>
+                      </div>
                     </div>
                   );
                 })}
               </div>
 
-              {/* footer of email */}
-              <div className="mt-6 border-t border-line pt-5">
-                <p className="font-mono text-[10px] leading-relaxed text-faint">
-                  You are receiving this service email because you@yourcompany.com
-                  is subscribed to: TX.
-                  <br />
-                  Annual option: pay 10 months, get 12. Referral: one paying intro
-                  = next month free.
-                </p>
-                <p className="mt-3 font-mono text-[10px] text-amber">
-                  Stop alert emails · Contact support
-                </p>
+              <div className="mt-6 border-t border-line pt-4 font-mono text-[10px] text-amber">
+                Download 19-Column CRM CSV ↓ · Filter by ZIP &amp; Venue Type · 1-Click Unsubscribe
               </div>
             </div>
           </div>
         </Reveal>
 
-        {/* what each line means */}
-        <Reveal delay={80}>
-          <div className="mt-12">
-            <h2 className="font-display text-2xl font-medium text-cream">
-              How to read it
-            </h2>
-            <div className="mt-6 divide-y divide-line border-y border-line">
-              {[
-                ["FILED", "An application was submitted. The venue is planning right now."],
-                ["ISSUED", "A licence was granted. They are closer to opening."],
-                ["SCORE 0-100", "How urgently this lead should be called. 70+ means call today."],
-                ["★ TOP LEAD", "The single best filing of the day, extracted for you."],
-                ["→ why it matters", "One line decoding what kind of buying decision is happening."],
-              ].map(([k, v]) => (
-                <div key={k} className="grid gap-2 py-4 sm:grid-cols-[160px_1fr]">
-                  <span className="font-mono text-[11px] font-semibold tracking-[0.1em] text-amber">
-                    {k}
-                  </span>
-                  <span className="text-sm leading-relaxed text-smoke">{v}</span>
-                </div>
-              ))}
+        {/* Interactive Beverage Pitch Script Preview */}
+        {top && (
+          <Reveal delay={80}>
+            <div className="mt-8">
+              <OutreachKit
+                coldEmailSubject={top.dossier.outreach.coldEmailSubject}
+                coldEmailBody={top.dossier.outreach.coldEmailBody}
+                callOpener={top.dossier.outreach.callOpener}
+                dropByNote={top.dossier.outreach.dropByNote}
+              />
             </div>
-          </div>
-        </Reveal>
+          </Reveal>
+        )}
 
         {/* CTA */}
         <Reveal delay={120}>
-          <div className="mt-12 rounded-2xl border border-amber/40 bg-wine-card p-7 sm:p-9">
+          <div className="mt-10 rounded-2xl border border-amber/40 bg-wine-card p-7 sm:p-9">
             <h2 className="font-display text-2xl font-medium text-cream">
-              Start your 7-day free trial.
+              Start your 7-day free trial — no credit card.
             </h2>
             <p className="mt-2 max-w-md text-sm leading-relaxed text-smoke">
-              Pick your states, drop your email. Your first digest lands at the next
-              morning sweep.
+              Pick your market below. Your first morning dossier + 19-column CRM CSV lands on the
+              next daily sweep.
             </p>
             <div className="mt-6 max-w-md">
               <SubscribeForm plan="solo" />
@@ -304,19 +358,13 @@ export default async function SamplePage() {
             href="/coverage"
             className="font-mono text-[11px] tracking-[0.15em] text-amber hover:underline"
           >
-            SEE COVERAGE →
+            SEE ALL 9 LIVE MARKETS →
           </Link>
           <Link
-            href="/snapshot"
+            href="/feed"
             className="font-mono text-[11px] tracking-[0.15em] text-amber hover:underline"
           >
-            FREE SNAPSHOT →
-          </Link>
-          <Link
-            href="/#pricing"
-            className="font-mono text-[11px] tracking-[0.15em] text-amber hover:underline"
-          >
-            PLANS →
+            BROWSE LIVE FEED →
           </Link>
         </div>
       </div>

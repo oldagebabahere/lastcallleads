@@ -1,21 +1,17 @@
-// DISTRIBUTOR FINDER — turns the federal TTB wholesaler permit list that the
-// site already ingests (licenses table, keys "TTB-…") into outreach prospects.
-// TTB has no website/email, so each wholesaler's website is looked up once via
-// the Brave Search API (free plan). Needs BRAVE_API_KEY; without it this does
-// nothing and never throws. Rows are stored in `prospects` with category
-// "distributor"; the outreach route builds info@<domain> from the website.
+// DISTRIBUTOR FINDER — turns federal TTB wholesaler permits into outreach
+// prospects by looking up each wholesaler's official domain via Brave Search API.
 import { db } from "@/db";
 import { ensureSchema } from "@/db/bootstrap";
 import { licenses, prospects } from "@/db/schema";
 import { and, eq, ilike, like, or } from "drizzle-orm";
 
-// Directories / social sites are never a company's own website.
-const BAD_HOSTS = [
-  "facebook.", "linkedin.", "yelp.", "yellowpages.", "mapquest.", "bbb.org",
-  "opencorporates.", "dnb.com", "zoominfo.", "bizapedia.", "manta.", "chamberofcommerce.",
-  "instagram.", "twitter.", "x.com", "youtube.", "wikipedia.", "indeed.", "glassdoor.",
-  "buzzfile.", "corporationwiki.", "dandb.", "alignable.", "cybo.", "mapquest.", "google.",
-  "ttb.gov", "gov", "tripadvisor.", "amazon.", "ebay.", "pinterest.",
+const BAD_DOMAINS = [
+  "facebook.com", "linkedin.com", "yelp.com", "yellowpages.com", "mapquest.com",
+  "bbb.org", "opencorporates.com", "dnb.com", "zoominfo.com", "bizapedia.com",
+  "manta.com", "chamberofcommerce.com", "instagram.com", "twitter.com", "x.com",
+  "youtube.com", "wikipedia.org", "indeed.com", "glassdoor.com", "buzzfile.com",
+  "corporationwiki.com", "dandb.com", "alignable.com", "cybo.com", "google.com",
+  "tripadvisor.com", "amazon.com", "ebay.com", "pinterest.com", "bloomberg.com",
 ];
 
 function hostOf(url: string): string | null {
@@ -26,6 +22,18 @@ function hostOf(url: string): string | null {
   }
 }
 
+function isBadHost(host: string): boolean {
+  if (
+    host.endsWith(".gov") ||
+    host.endsWith(".mil") ||
+    host.endsWith(".edu") ||
+    host.endsWith(".ca")
+  ) {
+    return true;
+  }
+  return BAD_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`));
+}
+
 function nameToken(name: string): string | null {
   const words = name
     .toLowerCase()
@@ -34,9 +42,11 @@ function nameToken(name: string): string | null {
     .filter(
       (w) =>
         w.length >= 4 &&
-        !["distributing", "distributors", "distributor", "wholesale", "beverage",
-          "beverages", "company", "corporation", "limited", "liquor", "wine", "spirits",
-          "beer", "group", "brands", "imports", "importers"].includes(w)
+        ![
+          "distributing", "distributors", "distributor", "wholesale", "beverage",
+          "beverages", "company", "corporation", "limited", "liquor", "wine",
+          "spirits", "beer", "group", "brands", "imports", "importers",
+        ].includes(w)
     );
   return words[0] ?? null;
 }
@@ -64,9 +74,7 @@ async function findWebsite(
   for (const r of data.web?.results ?? []) {
     if (!r.url) continue;
     const host = hostOf(r.url);
-    if (!host || host.endsWith(".ca")) continue;
-    if (BAD_HOSTS.some((b) => host.includes(b))) continue;
-    // The result must actually look like THIS company (avoid random sites).
+    if (!host || isBadHost(host)) continue;
     const hay = `${host} ${r.title ?? ""}`.toLowerCase();
     if (token1 && !hay.includes(token1)) continue;
     return `https://${host}`;
@@ -76,9 +84,9 @@ async function findWebsite(
 
 export async function harvestDistributors(
   state: string,
-  maxLookups = 8
+  maxLookups = 5
 ): Promise<{ ok: boolean; looked: number; found: number; error?: string }> {
-  const token = process.env.BRAVE_API_KEY;
+  const token = process.env.BRAVE_API_KEY?.trim();
   if (!token) return { ok: false, looked: 0, found: 0, error: "BRAVE_API_KEY missing" };
   try {
     await ensureSchema();
@@ -130,7 +138,6 @@ export async function harvestDistributors(
         website = null;
       }
       if (website) found++;
-      // Always store (website may be null) so we never look the same one up twice.
       await db
         .insert(prospects)
         .values({
@@ -146,7 +153,7 @@ export async function harvestDistributors(
           lng: null,
         })
         .onConflictDoNothing();
-      await new Promise((res) => setTimeout(res, 1_100)); // Brave free plan: 1 req/sec
+      await new Promise((res) => setTimeout(res, 1_100));
     }
     return { ok: true, looked, found };
   } catch (err) {

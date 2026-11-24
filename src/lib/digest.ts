@@ -1,9 +1,16 @@
-// Shared digest runner used by the cron route and the manual admin trigger.
-import { db } from "@/db";
-import { and, desc, gt, inArray, eq, lt, or } from "drizzle-orm";
+// Shared digest, briefing, and monthly recap runner.
+import { db, pool } from "@/db";
+import { and, desc, eq, gt, ilike, inArray, isNull, lt, notLike, or } from "drizzle-orm";
 import { events, licenses, subscribers, type FilingEvent } from "@/db/schema";
-import { sendBriefing, sendDigest, sendMonthlyRecap, sendTrialEnded } from "./email";
+import {
+  sendBriefing,
+  sendDigest,
+  sendMonthlyRecap,
+  sendTrialEnded,
+  type DigestExtra,
+} from "./email";
 import { dedupeKey, isJunkEntity, matchesIntent, scoreFiling } from "./lead-score";
+import { pushSubscriberWebhook } from "./notify";
 
 export type DigestReport = {
   subscriber: string;
@@ -11,7 +18,7 @@ export type DigestReport = {
   status: string;
 };
 
-// Expired trials: send the one-time "trial over" email and stop their digests.
+// Expired trials: send one-time "trial over" email (respecting emailOptOut) and stop digests.
 export async function sweepTrials(): Promise<number> {
   const expired = await db
     .select()
@@ -24,13 +31,20 @@ export async function sweepTrials(): Promise<number> {
       )
     )
     .limit(100);
+
   let notified = 0;
   for (const sub of expired) {
-    try {
-      await sendTrialEnded(sub);
-      notified++;
-    } catch {
-      // flag regardless so one bad address can't retrigger daily
+    if (!sub.emailOptOut) {
+      try {
+        await sendTrialEnded({
+          email: sub.email,
+          states: sub.states,
+          plan: sub.plan,
+        });
+        notified++;
+      } catch {
+        // mark notified regardless so one broken address can't retrigger daily
+      }
     }
     await db
       .update(subscribers)
@@ -47,6 +61,7 @@ export async function runDigest(): Promise<{
   reports: DigestReport[];
 }> {
   await sweepTrials().catch(() => 0);
+
   const subs = await db
     .select()
     .from(subscribers)
@@ -73,42 +88,142 @@ export async function runDigest(): Promise<{
       .map((s) => s.trim().toUpperCase())
       .filter(Boolean);
     if (stateList.length === 0) continue;
+
     const since = sub.lastDigestAt ?? dayAgo;
+    const cityWant = (sub.cityFilter ?? "").trim();
+
+    // Push down state + non-TTB + optional city filter into SQL before capping.
+    const conds = [
+      inArray(events.state, stateList),
+      gt(events.detectedAt, since),
+      or(isNull(events.licenseKey), notLike(events.licenseKey, "TTB-%")),
+    ];
+    if (cityWant) {
+      conds.push(ilike(events.city, `%${cityWant}%`));
+    }
 
     const raw = await db
       .select()
       .from(events)
-      .where(and(inArray(events.state, stateList), gt(events.detectedAt, since)))
+      .where(and(...conds))
       .orderBy(desc(events.occurredAt))
-      .limit(300);
+      .limit(1000);
 
-    // Apply the subscriber's own lead-type filter (chosen on /prefs).
+    // Fetch license enrichment (phone, address, zip, typeName, sourceUrl) BEFORE ZIP filtering.
+    const extra: DigestExtra = new Map();
+    const keys = raw.map((e) => e.licenseKey).filter((k): k is string => Boolean(k));
+    for (let i = 0; i < keys.length; i += 400) {
+      const lic = await db
+        .select({
+          state: licenses.state,
+          key: licenses.licenseKey,
+          phone: licenses.phone,
+          address: licenses.address,
+          zip: licenses.zip,
+          typeName: licenses.typeName,
+          sourceUrl: licenses.sourceUrl,
+        })
+        .from(licenses)
+        .where(
+          and(
+            inArray(licenses.state, stateList),
+            inArray(licenses.licenseKey, keys.slice(i, i + 400))
+          )
+        );
+      for (const l of lic) {
+        extra.set(`${l.state}|${l.key}`, {
+          phone: l.phone,
+          address: l.address,
+          zip: l.zip,
+          typeName: l.typeName,
+          sourceUrl: l.sourceUrl,
+          monthlyRevenue: null,
+        });
+      }
+    }
+
+    // TX Multi-Unit Operator enrichment: match venue or parent LLC against TX Comptroller alcohol receipts!
+    if (stateList.includes("TX")) {
+      const txNames = Array.from(
+        new Set(
+          raw
+            .filter((e) => e.state === "TX")
+            .flatMap((e) => [e.tradeName, e.ownerName])
+            .map((n) => (n ?? "").trim().toLowerCase())
+            .filter((n) => n.length >= 3)
+        )
+      ).slice(0, 300);
+      if (txNames.length) {
+        try {
+          const revRes = await pool.query<{ k: string; total: number }>(
+            `SELECT lower(coalesce(owner_name, trade_name)) AS k, max(total) AS total
+             FROM venue_receipts
+             WHERE lower(trade_name) = ANY($1::text[]) OR lower(owner_name) = ANY($1::text[])
+             GROUP BY 1`,
+            [txNames]
+          );
+          const revByName = new Map(revRes.rows.map((r) => [r.k, Number(r.total)]));
+          for (const e of raw) {
+            if (e.state !== "TX" || !e.licenseKey) continue;
+            const hit =
+              revByName.get((e.ownerName ?? "").trim().toLowerCase()) ??
+              revByName.get((e.tradeName ?? "").trim().toLowerCase()) ??
+              null;
+            if (hit && hit > 0) {
+              const cur = extra.get(`${e.state}|${e.licenseKey}`) ?? {
+                phone: null,
+                address: null,
+                zip: null,
+                typeName: e.typeName,
+              };
+              extra.set(`${e.state}|${e.licenseKey}`, { ...cur, monthlyRevenue: hit });
+            }
+          }
+        } catch {
+          // receipts table optional
+        }
+      }
+    }
+
+    let evts = raw;
+
+    // 1) ZIP code filter (now genuinely enforced!)
+    const zipSet = new Set(
+      (sub.zipFilter ?? "")
+        .split(/[,\s]+/)
+        .map((z) => z.replace(/\D/g, "").slice(0, 5))
+        .filter((z) => z.length === 5)
+    );
+    if (zipSet.size > 0) {
+      evts = evts.filter((e) => {
+        const info = e.licenseKey ? extra.get(`${e.state}|${e.licenseKey}`) : undefined;
+        const z = (info?.zip ?? "").replace(/\D/g, "").slice(0, 5);
+        return Boolean(z && zipSet.has(z));
+      });
+    }
+
+    // 2) Lead-type / intent tag filter
     const tags = (sub.typeFilter ?? "")
       .split(",")
       .map((t) => t.trim())
       .filter(Boolean);
-    let evts = tags.length
-      ? raw.filter((e) =>
-          matchesIntent(
-            {
-              eventType: e.eventType,
-              typeName: e.typeName,
-              city: e.city,
-              county: e.county,
-              occurredAt: e.occurredAt,
-              summary: e.summary,
-            },
-            tags
-          )
+    if (tags.length) {
+      evts = evts.filter((e) =>
+        matchesIntent(
+          {
+            eventType: e.eventType,
+            typeName: e.typeName,
+            city: e.city,
+            county: e.county,
+            occurredAt: e.occurredAt,
+            summary: e.summary,
+          },
+          tags
         )
-      : raw;
-
-    // Saved searches: city + keyword filters (set on /prefs or via the
-    // "save this search" button on /feed) narrow the digest further.
-    const cityWant = (sub.cityFilter ?? "").trim().toLowerCase();
-    if (cityWant) {
-      evts = evts.filter((e) => (e.city ?? "").toLowerCase().includes(cityWant));
+      );
     }
+
+    // 3) Saved search keywords filter
     const kwWant = (sub.keywordFilter ?? "").trim().toLowerCase();
     if (kwWant) {
       const kws = kwWant.split(/[,\s]+/).filter(Boolean);
@@ -118,10 +233,7 @@ export async function runDigest(): Promise<{
       });
     }
 
-    // Clean up BEFORE cutting to the digest size:
-    //  1. drop nonprofits / churches / clubs (one-off event permits)
-    //  2. show each business once (several permits for one applicant)
-    //  3. rank by lead score, so the best leads are never cut by the size cap
+    // 4) Drop nonprofits/temp-events, dedupe per business, rank by lead score.
     const scoreOf = (e: FilingEvent) =>
       scoreFiling({
         eventType: e.eventType,
@@ -131,11 +243,12 @@ export async function runDigest(): Promise<{
         occurredAt: e.occurredAt,
         summary: e.summary,
       }).value;
+
     const best = new Map<string, { e: FilingEvent; v: number }>();
     for (const e of evts) {
-      if (e.licenseKey?.startsWith("TTB-")) continue; // federal bulk list, not a new filing
+      if (e.licenseKey?.startsWith("TTB-")) continue;
       if (isJunkEntity(e.tradeName, e.ownerName, e.summary, e.typeName)) continue;
-      const key = dedupeKey(e.tradeName ?? e.summary, e.city);
+      const key = dedupeKey(e.tradeName ?? e.ownerName ?? e.summary, e.city);
       const v = scoreOf(e);
       const cur = best.get(key);
       if (!cur || v > cur.v) best.set(key, { e, v });
@@ -143,8 +256,7 @@ export async function runDigest(): Promise<{
     const ranked = [...best.values()].sort((a, b) => b.v - a.v).map((x) => x.e);
     const totalFound = ranked.length;
 
-    // Respect the subscriber's requested digest size.
-    const cap = sub.digestLimit || 40;
+    const cap = Math.min(200, Math.max(5, sub.digestLimit || 40));
     evts = ranked.slice(0, cap);
 
     if (evts.length === 0) {
@@ -156,36 +268,11 @@ export async function runDigest(): Promise<{
       continue;
     }
 
-    // One subscriber's failure must never stop the whole run — later runs
-    // would otherwise skip everyone queued behind them.
     try {
-      // Contact details (phone / address / licence type) from the licence
-      // record, so the digest is actually callable — not just a name list.
-      const extra = new Map<
-        string,
-        { phone: string | null; address: string | null; typeName: string | null }
-      >();
-      const keys = evts.map((e) => e.licenseKey).filter((k): k is string => Boolean(k));
-      if (keys.length) {
-        const lic = await db
-          .select({
-            state: licenses.state,
-            key: licenses.licenseKey,
-            phone: licenses.phone,
-            address: licenses.address,
-            typeName: licenses.typeName,
-          })
-          .from(licenses)
-          .where(and(inArray(licenses.state, stateList), inArray(licenses.licenseKey, keys)));
-        for (const l of lic) {
-          extra.set(`${l.state}|${l.key}`, {
-            phone: l.phone,
-            address: l.address,
-            typeName: l.typeName,
-          });
-        }
-      }
       const result = await sendDigest(sub, evts, { total: totalFound, extra });
+      if (sub.webhookUrl) {
+        await pushSubscriberWebhook(sub, evts).catch(() => undefined);
+      }
       if (result.status !== "error") {
         await db
           .update(subscribers)
@@ -211,7 +298,8 @@ export async function runDigest(): Promise<{
   return { ok: true, sent, skipped: reports.length - sent, reports };
 }
 
-// Weekly territory briefing — extra value, every Monday.
+// Weekly territory briefing — Mondays only. Queries per subscriber state set so
+// big states never crowd out smaller territories inside a global LIMIT.
 export async function runBriefings(): Promise<{
   ok: boolean;
   sent: number;
@@ -235,20 +323,8 @@ export async function runBriefings(): Promise<{
     .limit(500);
 
   const weekAgo = new Date(Date.now() - 7 * 86_400_000);
-  // Briefing events for each subscriber's chosen states, within last 7 days.
-  let weekEvents: FilingEvent[] = [];
-  try {
-    weekEvents = await db
-      .select()
-      .from(events)
-      .where(and(gt(events.occurredAt, weekAgo)))
-      .orderBy(desc(events.occurredAt))
-      .limit(2000);
-  } catch {
-    weekEvents = [];
-  }
-
   const reports: { subscriber: string; status: string }[] = [];
+
   for (const sub of subs) {
     const stateList = sub.states
       .split(",")
@@ -256,7 +332,22 @@ export async function runBriefings(): Promise<{
       .filter(Boolean);
     if (!stateList.length) continue;
 
-    const mine = weekEvents.filter((e) => stateList.includes(e.state));
+    const raw = await db
+      .select()
+      .from(events)
+      .where(
+        and(
+          inArray(events.state, stateList),
+          gt(events.occurredAt, weekAgo),
+          or(isNull(events.licenseKey), notLike(events.licenseKey, "TTB-%"))
+        )
+      )
+      .orderBy(desc(events.occurredAt))
+      .limit(1000);
+
+    const mine = raw.filter(
+      (e) => !isJunkEntity(e.tradeName, e.ownerName, e.summary, e.typeName)
+    );
     if (mine.length === 0) continue;
 
     const byCounty = new Map<string, number>();
@@ -273,11 +364,17 @@ export async function runBriefings(): Promise<{
       .sort((a, b) => b[1] - a[1])
       .slice(0, 3)
       .map(([t]) => t);
-    // Priority calls: hottest full-venue filings, names unlocked for members.
     const hotLeads = mine
-      .filter((e) => e.typeName && /mixed beverage|package store|restaurant|brewpub|liquor/i.test(e.typeName))
+      .filter(
+        (e) =>
+          e.typeName &&
+          /mixed beverage|package store|restaurant|brewpub|liquor/i.test(e.typeName)
+      )
       .slice(0, 5)
-      .map((e) => `${e.tradeName ?? e.ownerName ?? "Venue"} · ${e.city ?? e.county ?? e.state} · ${e.typeName}`);
+      .map(
+        (e) =>
+          `${e.tradeName ?? e.ownerName ?? "Venue"} · ${e.city ?? e.county ?? e.state} · ${e.typeName}`
+      );
 
     try {
       const result = await sendBriefing({
@@ -299,7 +396,7 @@ export async function runBriefings(): Promise<{
   return { ok: true, sent, reports };
 }
 
-// Monthly value recap — retention email. Shows customer what they got.
+// Monthly value recap — queries per subscriber state list cleanly.
 export async function runMonthlyRecaps(): Promise<{
   ok: boolean;
   sent: number;
@@ -323,20 +420,31 @@ export async function runMonthlyRecaps(): Promise<{
     .limit(500);
 
   const monthAgo = new Date(Date.now() - 30 * 86_400_000);
-  const monthEvents = await db
-    .select()
-    .from(events)
-    .where(gt(events.occurredAt, monthAgo))
-    .orderBy(desc(events.occurredAt))
-    .limit(5000);
-
   const reports: { subscriber: string; status: string }[] = [];
+
   for (const sub of subs) {
     const stateList = sub.states
       .split(",")
       .map((s) => s.trim().toUpperCase())
       .filter(Boolean);
-    const mine = monthEvents.filter((e) => stateList.includes(e.state));
+    if (!stateList.length) continue;
+
+    const raw = await db
+      .select()
+      .from(events)
+      .where(
+        and(
+          inArray(events.state, stateList),
+          gt(events.occurredAt, monthAgo),
+          or(isNull(events.licenseKey), notLike(events.licenseKey, "TTB-%"))
+        )
+      )
+      .orderBy(desc(events.occurredAt))
+      .limit(2500);
+
+    const mine = raw.filter(
+      (e) => !isJunkEntity(e.tradeName, e.ownerName, e.summary, e.typeName)
+    );
     if (!mine.length) continue;
 
     const hot = mine.filter((e) =>
@@ -350,11 +458,20 @@ export async function runMonthlyRecaps(): Promise<{
       if (e.city) byCity.set(e.city, (byCity.get(e.city) ?? 0) + 1);
       if (e.typeName) byType.set(e.typeName, (byType.get(e.typeName) ?? 0) + 1);
     }
-    const topCities = [...byCity.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([x]) => x);
-    const topTypes = [...byType.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([x]) => x);
-    const sampleLeads = hot.slice(0, 5).map(
-      (e) => `${e.tradeName ?? e.ownerName ?? "Venue"} · ${e.city ?? e.county ?? e.state} · ${e.typeName ?? "filing"}`
-    );
+    const topCities = [...byCity.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([x]) => x);
+    const topTypes = [...byType.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 4)
+      .map(([x]) => x);
+    const sampleLeads = hot
+      .slice(0, 5)
+      .map(
+        (e) =>
+          `${e.tradeName ?? e.ownerName ?? "Venue"} · ${e.city ?? e.county ?? e.state} · ${e.typeName ?? "filing"}`
+      );
 
     try {
       const result = await sendMonthlyRecap({

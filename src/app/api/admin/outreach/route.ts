@@ -1,18 +1,9 @@
 // /api/admin/outreach — today's personalized cold-outreach batch.
-//
-// Pulls BUYER prospects (insurance / beverage / attorney) for a state,
-// counts this week's REAL filings from the events table, and generates a
-// one-line personalized opener with Groq or Gemini (falls back to a smart
-// template when no key / any error). The Google Apps Script in
-// OUTREACH-AUTOMATION.md fetches this once a day and sends via Gmail, so
-// replies land in the owner's own inbox.
-//
-//   GET /api/admin/outreach?state=TX&key=ADMIN_KEY&limit=25
-//   GET /api/admin/outreach?state=TX&category=insurance&key=...
+//   GET /api/admin/outreach?state=AUTO&withEmail=1&rotate=1&limit=25&key=ADMIN_KEY
 import { db } from "@/db";
 import { ensureSchema } from "@/db/bootstrap";
 import { events, prospects } from "@/db/schema";
-import { isAdminKey } from "@/lib/auth";
+import { extractAdminKey, isAdminKey } from "@/lib/auth";
 import { clientIp, rateLimit, tooManyRequests } from "@/lib/rate-limit";
 import { harvestDistributors } from "@/lib/distributors";
 import { findRealEmail, mapLimit } from "@/lib/email-finder";
@@ -40,7 +31,6 @@ type OutLead = RawLead & {
   aiSource: "ai" | "template";
 };
 
-// The people we sell to — venues themselves (bar) are NOT outreach targets.
 const BUYER_CATEGORIES = ["insurance", "distributor", "beverage", "attorney"] as const;
 
 function domainEmail(site: string | null): string | null {
@@ -54,7 +44,6 @@ function domainEmail(site: string | null): string | null {
   return `info@${m[0].replace(/\/$/, "").toLowerCase()}`;
 }
 
-// Guess a contact's first name from a business name when we can.
 function guessContact(company: string): string | null {
   const of = company.match(/^law offices? of ([a-z][a-z'.-]+(?:\s+[a-z][a-z'.-]+)?)/i);
   if (of) return of[1].split(" ")[0];
@@ -71,7 +60,6 @@ function templateLine(
 ): string {
   const where = city ? `${city}, ${state}` : state;
   if (filings <= 0) {
-    // No filings in this state's feed this week — sell the timing, not a number.
     if (category === "insurance") {
       return `When a venue files its liquor application in ${where}, liquor-liability coverage is one of the first things it needs — we flag them the morning the filing posts.`;
     }
@@ -91,14 +79,11 @@ function templateLine(
 
 type AiBatch = { company: string; city: string | null; state: string; category: string }[];
 
-async function aiLinesGroq(
-  batch: AiBatch,
-  filings: number
-): Promise<Map<string, string>> {
+async function aiLinesGroq(batch: AiBatch, filings: number): Promise<Map<string, string>> {
   const key = process.env.GROQ_API_KEY;
   if (!key) throw new Error("no groq key");
   const sys =
-    "You write first lines for cold emails for Last Call Leads, a $129/mo service that emails beverage-industry sellers every new US liquor-license filing the morning it posts. Write ONE opening line (max 220 chars, no greeting, no sign-off, no emoji, no fluff) personalized to the recipient's business type and city. You may use this REAL stat: " +
+    "You write first lines for cold emails for Last Call Leads, a $129/mo service that emails beverage-industry sellers every new US liquor-license filing the morning it posts. Write ONE opening line (max 220 chars, no greeting, no sign-off, no emoji, no fluff) personalized to the recipient's business type and city. Real stat you may use: " +
     `${filings} new liquor filings in their state this week. ` +
     'Return strict JSON: {"lines": {"<company>": "<line>"}} with exactly one line per company given.';
   const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
@@ -114,7 +99,7 @@ async function aiLinesGroq(
         { role: "user", content: JSON.stringify(batch) },
       ],
     }),
-    signal: AbortSignal.timeout(25_000),
+    signal: AbortSignal.timeout(15_000),
   });
   if (!res.ok) throw new Error(`groq ${res.status}`);
   const data = (await res.json()) as {
@@ -125,10 +110,7 @@ async function aiLinesGroq(
   return new Map(Object.entries(parsed.lines ?? {}));
 }
 
-async function aiLinesGemini(
-  batch: AiBatch,
-  filings: number
-): Promise<Map<string, string>> {
+async function aiLinesGemini(batch: AiBatch, filings: number): Promise<Map<string, string>> {
   const key = process.env.GEMINI_API_KEY;
   if (!key) throw new Error("no gemini key");
   const prompt =
@@ -137,7 +119,7 @@ async function aiLinesGemini(
     'Return strict JSON {"lines": {"<company>": "<line>"}} — exactly one line per company.\n\n' +
     JSON.stringify(batch);
   const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -145,7 +127,7 @@ async function aiLinesGemini(
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: { responseMimeType: "application/json" },
       }),
-      signal: AbortSignal.timeout(25_000),
+      signal: AbortSignal.timeout(15_000),
     }
   );
   if (!res.ok) throw new Error(`gemini ${res.status}`);
@@ -158,17 +140,22 @@ async function aiLinesGemini(
 }
 
 export async function GET(req: Request) {
-  const url = new URL(req.url);
-  const key = url.searchParams.get("key") ?? req.headers.get("x-admin-key");
-  if (!isAdminKey(key)) {
+  if (!rateLimit({ key: `outreach:${clientIp(req)}`, max: 20, windowMs: 60_000 })) {
+    return tooManyRequests();
+  }
+  if (!isAdminKey(extractAdminKey(req))) {
     return Response.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
 
+  // Always ensure schema BEFORE any DB query (prevents cold-DB crash in state=AUTO).
+  await ensureSchema();
+
+  const url = new URL(req.url);
   const stateParam = (url.searchParams.get("state") ?? "AUTO")
     .trim()
     .toUpperCase();
   const auto = stateParam === "AUTO";
-  if (!auto && stateParam.length !== 2) {
+  if (!auto && !/^[A-Z]{2}$/.test(stateParam)) {
     return Response.json(
       { ok: false, error: "pass ?state=XX or ?state=AUTO" },
       { status: 400 }
@@ -177,20 +164,14 @@ export async function GET(req: Request) {
   let state = stateParam;
   let pool: string[] = [];
 
-  // AUTO: rotate weekly across every state that has a harvested prospect
-  // pool (>= 20 prospects). Zero manual rotation — ever.
   if (auto) {
-    const counts = await db
-      .select({
-        state: prospects.state,
-        n: sql<number>`count(*)::int`,
-      })
-      .from(prospects)
-      .groupBy(prospects.state);
-    // Only pitch states where we really have filing data (events table).
-    const liveRows = await db
-      .selectDistinct({ state: events.state })
-      .from(events);
+    const [counts, liveRows] = await Promise.all([
+      db
+        .select({ state: prospects.state, n: sql<number>`count(*)::int` })
+        .from(prospects)
+        .groupBy(prospects.state),
+      db.selectDistinct({ state: events.state }).from(events),
+    ]);
     const live = new Set(liveRows.map((r) => r.state));
     pool = counts
       .filter((c) => c.n >= 20 && live.has(c.state))
@@ -201,7 +182,7 @@ export async function GET(req: Request) {
         {
           ok: false,
           error:
-            "No prospect pool yet — open PROSPECT FINDER in the dashboard and run one state once. After that, rotation is fully automatic (the daily job also grows the pool by itself).",
+            "No prospect pool yet — open PROSPECT FINDER in the dashboard and run one state once.",
         },
         { status: 400 }
       );
@@ -209,6 +190,7 @@ export async function GET(req: Request) {
     const weekIndex = Math.floor(Date.now() / (7 * 86_400_000));
     state = pool[weekIndex % pool.length];
   }
+
   const catsParam = (url.searchParams.get("category") ?? "")
     .split(",")
     .map((c) => c.trim().toLowerCase())
@@ -216,62 +198,54 @@ export async function GET(req: Request) {
   const categories = catsParam.length ? catsParam : [...BUYER_CATEGORIES];
   const limit = Math.min(
     Math.max(Number(url.searchParams.get("limit") ?? 25) || 25, 1),
-    50
+    35
   );
 
-  await ensureSchema();
-
-  // Real, current hook: how many filings actually landed this week.
   const weekAgo = new Date(Date.now() - 7 * 86_400_000);
-  // Uses the date at the SOURCE (occurredAt), not detectedAt — detectedAt is
-  // the import time, so a bulk import made every record look "this week"
-  // (e.g. 6,509 filings). If the number still looks implausible, drop it and
-  // let the template sell timing instead of a number.
-  const countRow = await db
-    .select({ n: sql<number>`count(distinct ${events.licenseKey})::int` })
-    .from(events)
-    .where(
-      and(
-        eq(events.state, state),
-        eq(events.eventType, "NEW_PENDING"), // real new applications only (no status changes)
-        gt(events.occurredAt, weekAgo),
-        sql`${events.licenseKey} NOT LIKE 'TTB-%'`,
-        sql`coalesce(${events.typeName}, '') NOT ILIKE '%temporary%'`,
-        sql`coalesce(${events.typeName}, '') NOT ILIKE '%nonprofit%'`
+  const [countRow, proofRows] = await Promise.all([
+    db
+      .select({ n: sql<number>`count(distinct ${events.licenseKey})::int` })
+      .from(events)
+      .where(
+        and(
+          eq(events.state, state),
+          eq(events.eventType, "NEW_PENDING"),
+          gt(events.occurredAt, weekAgo),
+          sql`coalesce(${events.licenseKey}, '') NOT LIKE 'TTB-%'`,
+          sql`coalesce(${events.typeName}, '') NOT ILIKE '%temporary%'`,
+          sql`coalesce(${events.typeName}, '') NOT ILIKE '%nonprofit%'`
+        )
+      ),
+    db
+      .select({ name: events.tradeName, city: events.city })
+      .from(events)
+      .where(
+        and(
+          eq(events.state, state),
+          isNotNull(events.tradeName),
+          isNotNull(events.occurredAt),
+          gt(events.occurredAt, new Date(Date.now() - 30 * 86_400_000))
+        )
       )
-    );
+      .orderBy(desc(events.occurredAt))
+      .limit(3),
+  ]);
+
   const rawCount = Number(countRow[0]?.n ?? 0);
   const filingsThisWeek = rawCount > 1500 ? 0 : rawCount;
-
-  // Proof for the email: 3 real, recent filings (public record) in this state.
-  const proofRows = await db
-    .select({ name: events.tradeName, city: events.city })
-    .from(events)
-    .where(
-      and(
-        eq(events.state, state),
-        isNotNull(events.tradeName),
-        isNotNull(events.occurredAt),
-        gt(events.occurredAt, new Date(Date.now() - 30 * 86_400_000))
-      )
-    )
-    .orderBy(desc(events.occurredAt))
-    .limit(3);
   const proof = proofRows
     .filter((r) => r.name && r.name.trim().length > 2)
     .map((r) => (r.city ? `${r.name!.trim()} (${r.city})` : r.name!.trim()));
 
-  // Autopilot: when distributors are requested, look up a few more wholesaler
-  // websites on every pull so the pool refills itself (no manual step).
   if (categories.includes("distributor")) {
-    await harvestDistributors(state, 8);
+    await harvestDistributors(state, 4).catch(() => undefined);
   }
 
-  // withEmail=1 -> only prospects that have a website (so an email can be
-  // built). rotate=1 -> a different slice of the pool every day, so the
-  // daily job never re-pulls the same first rows.
-  const withEmail = url.searchParams.get("withEmail") === "1";
-  const rotate = url.searchParams.get("rotate") === "1";
+  // Default to withEmail=1 & rotate=1 unless explicitly set to "0" so callers
+  // always get fresh, actionable leads with websites instead of repeating row 1.
+  const withEmail = url.searchParams.get("withEmail") !== "0";
+  const rotate = url.searchParams.get("rotate") !== "0";
+
   const where = and(
     eq(prospects.state, state),
     inArray(prospects.category, categories),
@@ -283,10 +257,8 @@ export async function GET(req: Request) {
     .where(where);
   const total = Number(totalRow[0]?.n ?? 0);
   const dayIndex = Math.floor(Date.now() / 86_400_000);
-  // Over-fetch (4x) because the safety filters below drop some rows
-  // (non-US, duplicates) — we trim back to `limit` after filtering.
-  const fetchSize = Math.min(limit * 4, 200);
-  const offset = rotate && total > fetchSize ? (dayIndex * fetchSize) % total : 0;
+  const fetchSize = Math.min(limit * 3, 120);
+  const offset = rotate && total > fetchSize ? (dayIndex * limit) % total : 0;
 
   const rows = await db
     .select()
@@ -296,21 +268,19 @@ export async function GET(req: Request) {
     .limit(fetchSize)
     .offset(offset);
 
-  // OSM sometimes lists the same business twice — dedupe by name.
   const seenNames = new Set<string>();
   const rawLeads: RawLead[] = [];
   for (const p of rows) {
     if (rawLeads.length >= limit) break;
-    // Canada safety-net (older harvests pre-date the US-area fix): never
-    // email .ca websites/emails or obviously-Canadian business names.
     const siteOrName = `${p.website ?? ""} ${p.name} ${p.city ?? ""}`.toLowerCase();
     if (
       /\.ca\b/.test(siteOrName) ||
-      /\b(canada|canadian|ontario|quebec|british columbia|alberta|manitoba|toronto|vancouver|montreal|calgary|ottawa)\b/.test(siteOrName)
+      /\b(canada|canadian|ontario|quebec|british columbia|alberta|manitoba|toronto|vancouver|montreal|calgary|ottawa)\b/.test(
+        siteOrName
+      )
     ) {
       continue;
     }
-    // Only US-style websites: skip any country-code TLD except .us
     const host = (p.website ?? "")
       .toLowerCase()
       .replace(/^https?:\/\//, "")
@@ -333,38 +303,43 @@ export async function GET(req: Request) {
     });
   }
 
-  // AI personalization (optional): one batched call, template fallback.
-  let provider = "template";
-  let lines = new Map<string, string>();
-  if (rawLeads.length) {
+  // Run AI line generation and real-email discovery in parallel to stay well under 60s.
+  const aiPromise = (async (): Promise<{ provider: string; lines: Map<string, string> }> => {
+    if (!rawLeads.length) return { provider: "template", lines: new Map() };
     const batch: AiBatch = rawLeads.map((l) => ({
       company: l.company,
       city: l.city,
       state: l.state,
       category: l.category,
     }));
-    try {
-      lines = process.env.GROQ_API_KEY
-        ? await aiLinesGroq(batch, filingsThisWeek)
-        : await aiLinesGemini(batch, filingsThisWeek);
-      provider = process.env.GROQ_API_KEY ? "groq" : "gemini";
-    } catch {
-      lines = new Map();
-      provider = "template";
+    if (process.env.GROQ_API_KEY) {
+      try {
+        return { provider: "groq", lines: await aiLinesGroq(batch, filingsThisWeek) };
+      } catch {
+        // fall through to Gemini or template
+      }
     }
-  }
+    if (process.env.GEMINI_API_KEY) {
+      try {
+        return { provider: "gemini", lines: await aiLinesGemini(batch, filingsThisWeek) };
+      } catch {
+        // fall through to template
+      }
+    }
+    return { provider: "template", lines: new Map() };
+  })();
 
-  // Real emails only: read them off the company's own website. Guessed
-  // info@ addresses bounced for most leads (hurts the sender's reputation),
-  // so they are used only when ?guess=1 is passed.
+  const [aiResult, found] = await Promise.all([
+    aiPromise,
+    mapLimit(rawLeads, 6, (l) => findRealEmail(l.website)),
+  ]);
+
   const allowGuess = url.searchParams.get("guess") === "1";
-  const found = await mapLimit(rawLeads, 6, (l) => findRealEmail(l.website));
-
   const leads: OutLead[] = rawLeads.map((l, idx) => {
     const real = found[idx];
     const guessed = allowGuess && !real ? domainEmail(l.website) : null;
     const email = real ?? guessed ?? "";
-    const ai = lines.get(l.company);
+    const ai = aiResult.lines.get(l.company);
     return {
       ...l,
       email,
@@ -383,8 +358,7 @@ export async function GET(req: Request) {
     ...(auto ? { autoRotated: true, rotationPool: pool } : {}),
     filingsThisWeek,
     proof,
-    aiProvider: provider,
-    hint: "emailSource 'listed' = a real address found on their own website. 'none' = no email found (not emailed).",
+    aiProvider: aiResult.provider,
     leads,
   });
 }
