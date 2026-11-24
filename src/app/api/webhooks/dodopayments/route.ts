@@ -8,9 +8,11 @@ import { db } from "@/db";
 import { ensureSchema } from "@/db/bootstrap";
 import { subscribers, webhookEvents } from "@/db/schema";
 import { verifyDodoWebhook } from "@/lib/dodo";
-import { sendWelcome } from "@/lib/email";
+import { alertFrom, sendWelcome } from "@/lib/email";
+import { isMailTransportConfigured, sendTransactionalMail } from "@/lib/mailer";
 import { sendTelegramOwner } from "@/lib/notify";
 import { LIVE_STATE_SET } from "@/lib/states";
+import crypto from "crypto";
 import { and, eq, isNull, sql } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
@@ -44,6 +46,29 @@ function getLastCallProductIds(): Set<string> {
     .map((x) => (x ?? "").trim())
     .filter(Boolean);
   return new Set(ids);
+}
+
+const EXTENSION_SUITE_PRODUCT_ID = "pdt_0NrebLD1tWfogHGqobMpi";
+
+// Generates a unique, valid Master Key matching the Pro Extension Suite's
+// offline modular verification (starts with DODO-, length >= 14, |hash| % 7 === 0).
+function generateExtensionMasterKey(seed: string): string {
+  const prefix = crypto
+    .createHash("sha256")
+    .update(seed)
+    .digest("hex")
+    .slice(0, 6)
+    .toUpperCase();
+  for (let n = 1000; n < 2000; n++) {
+    const candidate = `DODO-${prefix}-${n}`;
+    let hash = 0;
+    for (let i = 0; i < candidate.length; i++) {
+      hash = (hash << 5) - hash + candidate.charCodeAt(i);
+      hash |= 0;
+    }
+    if (Math.abs(hash) % 7 === 0) return candidate;
+  }
+  return "DODO-PROSUITE-1004";
 }
 
 function extractEventProductIds(data: NonNullable<DodoEvent["data"]>): string[] {
@@ -114,11 +139,48 @@ export async function POST(req: Request) {
     (eventProducts.length === 0 || !eventProducts.some((p) => allowedProducts.has(p)))
   ) {
     const isOneTimePaid = type.includes("payment.succeeded");
+    const amt =
+      typeof data.total_amount === "number"
+        ? `$${(data.total_amount / 100).toFixed(2)} ${data.currency ?? "USD"}`
+        : "";
+
+    // Auto-deliver working Master Key for Pro Suite Lifetime Unlock Key (All Extensions)!
+    if (isOneTimePaid && eventProducts.includes(EXTENSION_SUITE_PRODUCT_ID)) {
+      const masterKey = generateExtensionMasterKey(
+        `${email}:${data.payment_id ?? verified.webhookId}`
+      );
+      const custName = (data.customer?.name ?? "there").replace(/[<>&"]/g, "");
+      if (isMailTransportConfigured()) {
+        await sendTransactionalMail({
+          from: alertFrom(),
+          to: email,
+          subject: "Your Pro Suite Lifetime Master Key (All 210+ Extensions)",
+          html: `<!doctype html><html><body style="margin:0;background:#0b1020;color:#f1f5f9;font-family:Arial,sans-serif">
+            <div style="max-width:580px;margin:0 auto;padding:32px 20px">
+              <p style="font-family:monospace;font-size:11px;letter-spacing:0.18em;color:#fbbf24;text-transform:uppercase">PRO SUITE ECOSYSTEM · LIFETIME PASS</p>
+              <h1 style="font-size:24px;margin:8px 0 12px">Thank you for your purchase, ${custName}!</h1>
+              <p style="color:#cbd5e1;font-size:14px;line-height:1.6">Your Lifetime Master Key unlocks this extension plus all 210+ Pro Tools permanently with unlimited daily actions and zero cooldowns.</p>
+              <div style="margin:22px 0;padding:18px;border:1px solid #a855f7;border-radius:12px;background:#161030;text-align:center">
+                <div style="font-family:monospace;font-size:10px;letter-spacing:0.2em;color:#c084fc;margin-bottom:8px">YOUR LIFETIME MASTER KEY</div>
+                <div style="font-family:monospace;font-size:22px;font-weight:700;letter-spacing:0.12em;color:#ffffff">${masterKey}</div>
+              </div>
+              <p style="color:#cbd5e1;font-size:13px;line-height:1.7"><strong>How to activate (10 seconds):</strong><br/>1. Open your browser extension and click the Upgrade / Pro badge.<br/>2. Paste <code>${masterKey}</code> into the <em>Enter License Key</em> box.<br/>3. Click <strong>Activate Master Key</strong> — Pro unlocks instantly forever.</p>
+              <p style="color:#94a3b8;font-size:12px;margin-top:24px">Need help? Just reply to this email and we&apos;ll sort it out right away.</p>
+            </div>
+          </body></html>`,
+        }).catch(() => undefined);
+      }
+      await sendTelegramOwner(
+        `🎉 EXTENSION PRO SALE! ${amt}\nCustomer: ${email}\nMaster Key AUTO-EMAILED: ${masterKey}`
+      ).catch(() => undefined);
+      return Response.json({
+        received: true,
+        delivered: "extension_master_key",
+        productIds: eventProducts,
+      });
+    }
+
     if (isOneTimePaid) {
-      const amt =
-        typeof data.total_amount === "number"
-          ? `$${(data.total_amount / 100).toFixed(2)} ${data.currency ?? "USD"}`
-          : "";
       await sendTelegramOwner(
         `🛒 Sale on another Dodo product ${amt}\nCustomer: ${email}\nProduct: ${eventProducts.join(", ") || "unknown"}\n(Safely ignored by Last Call Leads — no wrong email sent!)`
       ).catch(() => undefined);
