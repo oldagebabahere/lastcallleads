@@ -41,10 +41,26 @@ export async function sendOpsAlert(subject: string, body: string): Promise<boole
   const opsEmail = (process.env.OPS_EMAIL ?? process.env.SMTP_USER ?? "").trim();
   const plainSummary = body.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 320);
 
-  // Instant Telegram watchdog alert (runs even if email providers hiccup!)
-  await sendTelegramOwner(`🛡️ ${BRAND.name} PourWatch\n${subject}\n${plainSummary}`).catch(
-    () => undefined
+  // When Telegram Bot is connected, route ALL internal ops/PourWatch alerts exclusively
+  // to Telegram (free & unlimited) so we save 100% of Resend/Gmail quota for customers!
+  const tgConfigured = Boolean(
+    process.env.TELEGRAM_BOT_TOKEN?.trim() && process.env.TELEGRAM_CHAT_ID?.trim()
   );
+  if (tgConfigured) {
+    const tg = await sendTelegramOwner(
+      `🛡️ ${BRAND.name} PourWatch\n${subject}\n${plainSummary}`
+    ).catch(() => ({ ok: false }));
+    if (tg.ok) {
+      await pool
+        .query(
+          `INSERT INTO email_log (to_email, subject, status, detail, event_count)
+           VALUES ('telegram@owner', $1, 'logged', 'sent via Telegram (saved email quota)', 0)`,
+          [subject]
+        )
+        .catch(() => undefined);
+      return true;
+    }
+  }
 
   const html = `<div style="font-family:Arial,sans-serif;max-width:620px;margin:auto;padding:24px">
     <h2>${BRAND.name} PourWatch</h2>

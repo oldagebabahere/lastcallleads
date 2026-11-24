@@ -153,12 +153,17 @@ export async function runMaintenance(): Promise<MaintenanceReport> {
 
   let warningSent = false;
   const opsEmail = (process.env.OPS_EMAIL ?? process.env.SMTP_USER ?? "").trim();
+  const tgConfigured = Boolean(
+    process.env.TELEGRAM_BOT_TOKEN?.trim() && process.env.TELEGRAM_CHAT_ID?.trim()
+  );
   if (staleSources.length) {
-    await sendTelegramOwner(
-      `⚠️ ${BRAND.name} Watchdog: ${staleSources.length} feed(s) stale:\n${staleSources.join(", ")}`
-    ).catch(() => undefined);
+    const tg = await sendTelegramOwner(
+      `⚠️ ${BRAND.name} Watchdog: ${staleSources.length} feed(s) stale:\n${staleSources.join(", ")}\nPourWatch auto-healer will retry automatically.`
+    ).catch(() => ({ ok: false }));
+    warningSent = tg.ok;
 
-    if (opsEmail && isMailTransportConfigured()) {
+    // Only use email fallback when Telegram is not configured (saves Resend/Gmail quota!)
+    if (!tgConfigured && opsEmail && isMailTransportConfigured()) {
       const res = await sendTransactionalMail({
         from: alertFrom(),
         to: opsEmail,

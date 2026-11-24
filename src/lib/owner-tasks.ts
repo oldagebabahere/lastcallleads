@@ -535,10 +535,30 @@ ${link}`;
   );
   const posted = outcomes.filter((o) => o.status === "posted").map((o) => o.p.id);
 
-  // Also ping owner's free Telegram bot with the ready-to-share LinkedIn post!
-  await sendTelegramOwner(
+  // Ping owner's free Telegram bot with the ready-to-share LinkedIn post!
+  // If Telegram delivers cleanly, skip emailing the draft to save Resend/Gmail quota for customers.
+  const tgSocial = await sendTelegramOwner(
     `📣 ${BRAND.name} Social Post (${posted.includes("linkedin") ? "AUTO-POSTED TO LINKEDIN" : "COPY & SHARE"})\n\n${linkedin}`
-  ).catch(() => undefined);
+  ).catch(() => ({ ok: false }));
+
+  if (tgSocial.ok) {
+    await db
+      .insert(emailLog)
+      .values({
+        toEmail: "telegram@owner",
+        subject: posted.length
+          ? `✓ Posted to ${posted.join(" + ")} — ${total} filings this week`
+          : `Social post ready — ${total} filings this week`,
+        status: "logged",
+        detail: "delivered via Telegram (saved email quota)",
+      })
+      .catch(() => undefined);
+    return {
+      sent: true,
+      detail: posted.length ? `auto: ${posted.join(",")}; telegram` : "telegram only",
+      posted,
+    };
+  }
   const autoLabels = outcomes
     .filter((o) => o.status === "posted")
     .map((o) => o.p.label)
