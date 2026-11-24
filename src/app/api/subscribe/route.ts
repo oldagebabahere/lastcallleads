@@ -135,11 +135,13 @@ export async function POST(req: Request) {
   // Direct checkout when explicitly requested OR when a previous trial already ended.
   if ((wantCheckout || alreadyTrialed) && dodoConfigured()) {
     try {
+      const statesCsv = stateList.join(",");
       const checkoutUrl = await createDodoCheckout({
         email,
         subscriberId,
         plan,
-        returnUrl: `${siteUrl()}/welcome?session=ok`,
+        states: statesCsv,
+        returnUrl: `${siteUrl()}/welcome?session=ok&email=${encodeURIComponent(email)}&token=${encodeURIComponent(scopedToken(email, "unlock"))}&states=${encodeURIComponent(statesCsv)}&plan=${encodeURIComponent(plan)}`,
       });
       return Response.json({ ok: true, mode: "checkout", checkoutUrl });
     } catch {

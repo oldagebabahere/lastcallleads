@@ -167,9 +167,9 @@ export default async function WelcomePage({
           score,
           dateLabel: e.occurredAt
             ? new Date(e.occurredAt).toLocaleDateString("en-US", {
-                month: "short",
-                day: "numeric",
-              })
+              month: "short",
+              day: "numeric",
+            })
             : "Fresh",
           unlockHref: filingUnlockUrl(e.id, cleanEmail),
         };

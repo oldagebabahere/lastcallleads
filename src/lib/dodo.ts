@@ -104,6 +104,7 @@ export async function createDodoCheckout(opts: {
   subscriberId: number;
   returnUrl: string;
   plan?: string;
+  states?: string;
 }): Promise<string> {
   const key = process.env.DODO_API_KEY?.trim();
   if (!key) throw new Error("DODO_API_KEY not configured");
@@ -137,6 +138,7 @@ export async function createDodoCheckout(opts: {
         subscriber_id: String(opts.subscriberId),
         subscriber_email: opts.email,
         plan: opts.plan === "pro" ? "pro" : "solo",
+        ...(opts.states ? { states: opts.states } : {}),
       },
     }),
     signal: AbortSignal.timeout(15_000),

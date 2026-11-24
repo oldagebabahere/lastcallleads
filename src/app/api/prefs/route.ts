@@ -66,8 +66,12 @@ export async function GET(req: Request) {
       exportHref: exportUrl(sub.email),
       upgradeHref:
         sub.status !== "active"
-          ? checkoutUpgradeUrl(sub.email, sub.plan === "pro" ? "pro" : "solo")
-          : null,
+          ? checkoutUpgradeUrl(sub.email, "pro")
+          : sub.plan === "solo"
+            ? checkoutUpgradeUrl(sub.email, "pro")
+            : null,
+      soloUpgradeHref:
+        sub.status !== "active" ? checkoutUpgradeUrl(sub.email, "solo") : null,
     },
   });
 }

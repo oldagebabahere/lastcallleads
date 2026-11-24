@@ -5,7 +5,7 @@ import { ensureSchema } from "@/db/bootstrap";
 import { subscribers } from "@/db/schema";
 import { createDodoCheckout, dodoConfigured } from "@/lib/dodo";
 import { siteUrl } from "@/lib/site";
-import { verifyScopedToken } from "@/lib/unsubscribe";
+import { scopedToken, verifyScopedToken } from "@/lib/unsubscribe";
 import { eq } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
@@ -46,11 +46,13 @@ export async function GET(req: Request) {
         : "solo";
 
   try {
+    const unlockTok = scopedToken(sub.email, "unlock");
     const checkoutUrl = await createDodoCheckout({
       email: sub.email,
       subscriberId: sub.id,
       plan,
-      returnUrl: `${siteUrl()}/welcome?session=ok`,
+      states: sub.states,
+      returnUrl: `${siteUrl()}/welcome?session=ok&email=${encodeURIComponent(sub.email)}&token=${encodeURIComponent(unlockTok)}&states=${encodeURIComponent(sub.states)}&plan=${encodeURIComponent(plan)}`,
     });
     return Response.redirect(checkoutUrl, 302);
   } catch {

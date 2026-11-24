@@ -9,6 +9,8 @@ import { ensureSchema } from "@/db/bootstrap";
 import { subscribers, webhookEvents } from "@/db/schema";
 import { verifyDodoWebhook } from "@/lib/dodo";
 import { sendWelcome } from "@/lib/email";
+import { sendTelegramOwner } from "@/lib/notify";
+import { LIVE_STATE_SET } from "@/lib/states";
 import { and, eq, isNull, sql } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
@@ -78,6 +80,11 @@ export async function POST(req: Request) {
   const metaPlan = String(data.metadata?.plan ?? "").toLowerCase();
   const resolvedPlan =
     metaPlan === "pro" || metaPlan === "enterprise" ? metaPlan : "solo";
+  const metaStatesRaw = String(data.metadata?.states ?? "")
+    .split(",")
+    .map((s) => s.trim().toUpperCase())
+    .filter((s) => LIVE_STATE_SET.has(s));
+  const resolvedStates = metaStatesRaw.length ? metaStatesRaw.join(",") : "TX";
 
   const isPaid =
     type.includes("payment.succeeded") ||
@@ -108,7 +115,7 @@ export async function POST(req: Request) {
           email,
           name: data.customer?.name ?? null,
           plan: resolvedPlan,
-          states: "TX",
+          states: resolvedStates,
           status: "active",
           emailOptOut: false,
           ...(customerId ? { stripeCustomerId: String(customerId) } : {}),
@@ -148,6 +155,12 @@ export async function POST(req: Request) {
           states: sub.states,
           plan: sub.plan,
         }).catch(() => undefined);
+
+        const price =
+          sub.plan === "enterprise" ? "$499/mo" : sub.plan === "pro" ? "$249/mo" : "$129/mo";
+        await sendTelegramOwner(
+          `💰 NEW PAID CUSTOMER! (${price})\nEmail: ${sub.email}\nPlan: ${sub.plan.toUpperCase()}\nStates: ${sub.states}`
+        ).catch(() => undefined);
       }
 
       // Grant referral credit ONCE on first paid activation (never on renewals).
@@ -175,6 +188,9 @@ export async function POST(req: Request) {
       .update(subscribers)
       .set({ status: "canceled" })
       .where(eq(subscribers.email, email));
+    await sendTelegramOwner(
+      `⚠️ Subscription ended (${type})\nEmail: ${email}`
+    ).catch(() => undefined);
   }
 
   return Response.json({ received: true });

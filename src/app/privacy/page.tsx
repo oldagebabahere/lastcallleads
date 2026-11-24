@@ -36,7 +36,7 @@ export default function PrivacyPage() {
         </LegalList>
       </LegalSection>
       <LegalSection title="4. Service providers and transfers">
-        <p>We use infrastructure and processors that may include Vercel or Netlify (hosting), Neon (PostgreSQL), GitHub (code automation), Resend (email), and Dodo Payments (payment processing, as Merchant of Record). These providers may process data in the United States or other countries under their own security and privacy terms.</p>
+        <p>We use infrastructure and processors that may include Vercel (hosting), Supabase (PostgreSQL), GitHub (code deployment), Resend (email), and Dodo Payments (payment processing, as Merchant of Record). These providers may process data in the United States or other countries under their own security and privacy terms.</p>
       </LegalSection>
       <LegalSection title="5. Cookies and analytics">
         <p>The core site does not currently require advertising cookies. Hosting and payment providers may set essential security or checkout cookies. If optional analytics or advertising tools are added, this policy and any required consent controls will be updated first.</p>

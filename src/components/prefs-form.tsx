@@ -41,6 +41,7 @@ export default function PrefsForm({
   const [limit, setLimit] = useState(40);
   const [exportHref, setExportHref] = useState<string | null>(null);
   const [upgradeHref, setUpgradeHref] = useState<string | null>(null);
+  const [soloUpgradeHref, setSoloUpgradeHref] = useState<string | null>(null);
   const [message, setMessage] = useState("");
 
   useEffect(() => {
@@ -61,6 +62,7 @@ export default function PrefsForm({
           setLimit(d.prefs.digestLimit ?? 40);
           setExportHref(d.prefs.exportHref ?? null);
           setUpgradeHref(d.prefs.upgradeHref ?? null);
+          setSoloUpgradeHref(d.prefs.soloUpgradeHref ?? null);
           setPhase("ready");
         } else {
           setPhase("error");
@@ -149,18 +151,28 @@ export default function PrefsForm({
         <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-amber/50 bg-amber/10 p-5">
           <div>
             <p className="font-mono text-[10px] tracking-[0.2em] text-amber">
-              FREE TRIAL · {plan.toUpperCase()} PLAN
+              {soloUpgradeHref ? `FREE TRIAL · ${plan.toUpperCase()} PLAN` : "EXPAND TO 3 STATES"}
             </p>
             <p className="mt-1 text-sm text-cream">
-              Keep your daily morning alerts running seamlessly after day 7.
+              Unlock up to 3 states, team seats, and instant Slack webhooks on Pro ($249/mo).
             </p>
           </div>
-          <a
-            href={upgradeHref}
-            className="rounded-md bg-amber px-4 py-2.5 font-mono text-[11px] font-semibold tracking-[0.12em] text-ink transition-transform hover:scale-[1.03]"
-          >
-            UPGRADE NOW →
-          </a>
+          <div className="flex flex-wrap items-center gap-2">
+            <a
+              href={upgradeHref}
+              className="rounded-md bg-amber px-4 py-2.5 font-mono text-[11px] font-semibold tracking-[0.12em] text-[#140b0e] transition-transform hover:scale-[1.03]"
+            >
+              UPGRADE TO PRO ($249/MO) →
+            </a>
+            {soloUpgradeHref && (
+              <a
+                href={soloUpgradeHref}
+                className="rounded-md border border-line bg-ink px-3.5 py-2.5 font-mono text-[11px] text-cream/80 hover:border-amber/50 hover:text-amber"
+              >
+                SOLO ($129/MO)
+              </a>
+            )}
+          </div>
         </div>
       )}
 

@@ -158,6 +158,34 @@ export async function POST(req: Request) {
     return Response.json({ ok: res.ok, detail: res.detail });
   }
 
+  if (action === "probe_fl") {
+    const url = "https://www2.myfloridalicense.com/sto/file_download/extracts/bd4006lic.csv";
+    try {
+      const res = await fetch(url, {
+        headers: {
+          "User-Agent": "LastCallLeads-PourWatch/2.0 (+public-records-monitor)",
+          Range: "bytes=0-2048",
+        },
+        signal: AbortSignal.timeout(12_000),
+        cache: "no-store",
+      });
+      const text = await res.text();
+      return Response.json({
+        ok: res.ok,
+        status: res.status,
+        contentType: res.headers.get("content-type"),
+        cfMitigated: res.headers.get("cf-mitigated"),
+        cfRay: res.headers.get("cf-ray"),
+        sample: text.slice(0, 300),
+      });
+    } catch (err) {
+      return Response.json({
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   if (action === "add_subscriber") {
     const email = (body.email ?? "").trim().toLowerCase();
     const name = (body.name ?? "").trim().slice(0, 80) || null;

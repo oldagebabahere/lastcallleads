@@ -590,25 +590,36 @@ export default async function Home() {
               </div>
             </div>
 
-            {/* MULTI-STATE */}
-            <div className="alloc-cell flex flex-col">
-              <p className="font-mono text-[11px] tracking-[0.2em] text-inkread/65">MULTI-STATE</p>
+            {/* MULTI-STATE PRO */}
+            <div className="alloc-cell relative flex flex-col border-amber/50 bg-amber/[0.06]">
+              <span className="absolute left-1/2 top-0 z-10 -translate-x-1/2 -translate-y-1/2 rounded-full bg-amber px-3 py-1 font-mono text-[9px] font-bold tracking-[0.2em] text-[#140b0e]">
+                BEST VALUE · SAVE 36%
+              </span>
+              <p className="font-mono text-[11px] font-semibold tracking-[0.2em] text-wine2">
+                PRO · MULTI-STATE
+              </p>
               <p className="mt-4 font-display text-5xl font-light">$249</p>
-              <p className="mt-1 font-mono text-[10px] tracking-[0.15em] text-inkread/55">
-                PER MONTH · UP TO 3 MARKETS
+              <p className="mt-1 font-mono text-[10px] tracking-[0.15em] text-inkread/65">
+                PER MONTH · UP TO 3 MARKETS ($83/STATE)
               </p>
               <p className="mt-3 inline-block rounded-md bg-amber/25 px-3 py-2 font-mono text-[10px] font-semibold tracking-[0.1em] text-wine2">
-                ✓ 7-day free trial · no card
+                ✓ 7-day free trial · no card · priority seat lock
               </p>
-              <ul className="mt-6 flex-1 space-y-3 text-sm text-inkread/75">
+              <ul className="mt-6 flex-1 space-y-3 text-sm text-inkread/85">
                 <li>· Everything in Territory</li>
                 <li>
-                  · <strong>Any 3 of our 9 live markets</strong> — switch anytime
+                  · <strong>Any 3 live markets</strong> — switch states anytime
                 </li>
-                <li>· Team seats for territory reps</li>
-                <li>· Weekly market intelligence briefing</li>
-                <li>· 19-column HubSpot/Salesforce CSV exports</li>
-                <li>· Priority email support</li>
+                <li>
+                  · <strong>Team seats</strong> for your field reps (up to 3)
+                </li>
+                <li>
+                  · <strong>Real-time Slack, Discord &amp; CRM webhooks</strong>
+                </li>
+                <li>
+                  · <strong>Unlimited 19-column HubSpot/Salesforce CSVs</strong>
+                </li>
+                <li>· Weekly market intelligence briefing + priority support</li>
               </ul>
               <div className="mt-8">
                 <SubscribeForm plan="pro" />

@@ -57,7 +57,7 @@ export async function GET(req: Request) {
     .where(
       and(
         stateList.length ? inArray(events.state, stateList) : undefined,
-        gt(events.detectedAt, since),
+        gt(events.occurredAt, since),
         or(isNull(events.licenseKey), notLike(events.licenseKey, "TTB-%"))
       )
     )
@@ -125,13 +125,23 @@ export async function GET(req: Request) {
     return true;
   });
 
-  const seen = new Set<string>();
-  const filtered = filtered0.filter((e) => {
-    const k = dedupeKey(e.tradeName ?? e.ownerName, e.city);
-    if (seen.has(k)) return false;
-    seen.add(k);
-    return true;
-  });
+  const bestByKey = new Map<string, { e: (typeof filtered0)[number]; scoreVal: number }>();
+  for (const e of filtered0) {
+    const k = `${e.state}|${dedupeKey(e.tradeName ?? e.ownerName, e.city)}`;
+    const scoreVal = scoreFiling({
+      eventType: e.eventType,
+      typeName: e.typeName,
+      city: e.city,
+      county: e.county,
+      occurredAt: e.occurredAt,
+      summary: e.summary,
+    }).value;
+    const prev = bestByKey.get(k);
+    if (!prev || scoreVal > prev.scoreVal) bestByKey.set(k, { e, scoreVal });
+  }
+  const filtered = [...bestByKey.values()]
+    .sort((a, b) => b.scoreVal - a.scoreVal)
+    .map((x) => x.e);
 
   const header = [
     "signal",
