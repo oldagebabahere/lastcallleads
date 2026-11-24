@@ -104,10 +104,17 @@ export default function ProspectMap({ pins }: { pins: MapPin[] }) {
     }).L;
 
     const map = L.map(ref.current, { scrollWheelZoom: true });
-    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      maxZoom: 18,
-      attribution: "&copy; OpenStreetMap",
-    }).addTo(map);
+    L.tileLayer(
+      "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}",
+      {
+        maxZoom: 16,
+        attribution: "Tiles &copy; Esri",
+      }
+    ).addTo(map);
+    L.tileLayer(
+      "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}",
+      { maxZoom: 16, opacity: 0.9 }
+    ).addTo(map);
 
     let first = true;
     for (const p of pins) {

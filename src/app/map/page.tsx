@@ -1,14 +1,14 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { and, desc, eq, inArray, notLike } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, notLike } from "drizzle-orm";
 import { db } from "@/db";
 import { ensureSchema } from "@/db/bootstrap";
 import { events, licenses, subscribers } from "@/db/schema";
 import { buildBeverageDossier, parseEventMeta } from "@/lib/beverage-intel";
-import { isJunkEntity, scoreFiling } from "@/lib/lead-score";
-import { embargoCutoff, maskName } from "@/lib/queries";
-import { LIVE_MARKETS, LIVE_STATE_CODES, LIVE_STATE_SET } from "@/lib/states";
-import { verifyScopedToken, filingUnlockUrl } from "@/lib/unsubscribe";
+import { dedupeKey, isJunkEntity, scoreFiling } from "@/lib/lead-score";
+import { embargoCutoff, hoursAgoMs, maskName } from "@/lib/queries";
+import { LIVE_MARKETS, LIVE_STATE_CODES, LIVE_STATE_SET, stateFullName } from "@/lib/states";
+import { checkoutUpgradeUrl, exportUrl, verifyScopedToken, filingUnlockUrl } from "@/lib/unsubscribe";
 import { Footer, Nav } from "@/components/ui";
 import TerritoryMap, { type TerritoryPin } from "@/components/territory-map";
 
@@ -171,27 +171,47 @@ const SHOWCASE_PINS: TerritoryPin[] = [
   },
 ];
 
-async function hasActiveSubscriberAccess(
+type SubscriberCtx = {
+  unlocked: boolean;
+  status: "active" | "trial" | null;
+  plan: string | null;
+  trialDaysLeft: number;
+};
+
+async function getSubscriberContext(
   email: string | undefined,
   token: string | undefined
-): Promise<boolean> {
+): Promise<SubscriberCtx> {
   const cleanEmail = (email ?? "").trim().toLowerCase();
   if (!cleanEmail || !token || !verifyScopedToken(cleanEmail, token, "unlock")) {
-    return false;
+    return { unlocked: false, status: null, plan: null, trialDaysLeft: 0 };
   }
   try {
     await ensureSchema();
     const subs = await db
-      .select({ status: subscribers.status, trialEndsAt: subscribers.trialEndsAt })
+      .select({
+        status: subscribers.status,
+        plan: subscribers.plan,
+        trialEndsAt: subscribers.trialEndsAt,
+      })
       .from(subscribers)
       .where(eq(subscribers.email, cleanEmail))
       .limit(1);
     const s = subs[0];
-    const trialLive =
-      s?.status === "trial" && s.trialEndsAt && new Date(s.trialEndsAt).getTime() > Date.now();
-    return Boolean(s?.status === "active" || trialLive);
+    if (!s) return { unlocked: false, status: null, plan: null, trialDaysLeft: 0 };
+    if (s.status === "active") {
+      return { unlocked: true, status: "active", plan: s.plan, trialDaysLeft: 0 };
+    }
+    if (s.status === "trial" && s.trialEndsAt && new Date(s.trialEndsAt).getTime() > Date.now()) {
+      const daysLeft = Math.max(
+        1,
+        Math.ceil((new Date(s.trialEndsAt).getTime() - Date.now()) / 86_400_000)
+      );
+      return { unlocked: true, status: "trial", plan: s.plan, trialDaysLeft: daysLeft };
+    }
+    return { unlocked: false, status: null, plan: null, trialDaysLeft: 0 };
   } catch {
-    return false;
+    return { unlocked: false, status: null, plan: null, trialDaysLeft: 0 };
   }
 }
 
@@ -204,15 +224,18 @@ export default async function TerritoryMapPage({
   const upper = state?.toUpperCase();
   const cleanState = upper && LIVE_STATE_SET.has(upper) ? upper : undefined;
   const cleanEmail = (email ?? "").trim().toLowerCase();
-  const isSubscriberView = await hasActiveSubscriberAccess(cleanEmail, token);
+  const subCtx = await getSubscriberContext(cleanEmail, token);
+  const isSubscriberView = subCtx.unlocked;
 
   let pins: TerritoryPin[] = [];
   const cut = embargoCutoff();
+  const recentCutoff = new Date(hoursAgoMs(45 * 24));
 
   try {
     await ensureSchema();
     const conds = [
       notLike(events.licenseKey, "TTB-%"),
+      gt(events.occurredAt, recentCutoff),
       cleanState ? eq(events.state, cleanState) : inArray(events.state, LIVE_STATE_CODES),
     ];
     if (signal === "FILED") conds.push(eq(events.eventType, "NEW_PENDING"));
@@ -223,11 +246,38 @@ export default async function TerritoryMapPage({
       .from(events)
       .where(and(...conds))
       .orderBy(desc(events.occurredAt))
-      .limit(160);
+      .limit(240);
 
-    const cleanRows = raw
-      .filter((e) => !isJunkEntity(e.tradeName, e.ownerName, e.typeName))
-      .slice(0, 80);
+    // Deduplicate venues (prevents same store appearing twice) and rank highest-value bars FIRST!
+    const bestByVenue = new Map<string, { e: (typeof raw)[number]; score: number }>();
+    for (const e of raw) {
+      if (isJunkEntity(e.tradeName, e.ownerName, e.typeName)) continue;
+      const sc = scoreFiling({
+        eventType: e.eventType,
+        typeName: e.typeName,
+        city: e.city,
+        county: e.county,
+        occurredAt: e.occurredAt,
+        summary: e.summary,
+      }).value;
+      const dk = `${e.state}|${dedupeKey(e.tradeName ?? e.ownerName ?? e.summary, e.city)}`;
+      const prev = bestByVenue.get(dk);
+      if (!prev || sc > prev.score) {
+        bestByVenue.set(dk, { e, score: sc });
+      }
+    }
+
+    const rankedEntries = [...bestByVenue.values()]
+      .sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        const ta = a.e.occurredAt ? new Date(a.e.occurredAt).getTime() : 0;
+        const tb = b.e.occurredAt ? new Date(b.e.occurredAt).getTime() : 0;
+        return tb - ta;
+      })
+      .slice(0, 75);
+
+    const cleanRows = rankedEntries.map((x) => x.e);
+    const scoreById = new Map(rankedEntries.map((x) => [x.e.id, x.score]));
 
     const keys = cleanRows.map((e) => e.licenseKey).filter((k): k is string => Boolean(k));
     const licMap = new Map<
@@ -276,13 +326,7 @@ export default async function TerritoryMapPage({
         lng += jLng * 1.4;
       }
 
-      const score = scoreFiling({
-        eventType: e.eventType,
-        typeName: e.typeName,
-        city: e.city,
-        county: e.county,
-        occurredAt: e.occurredAt,
-      }).value;
+      const score = scoreById.get(e.id) ?? 50;
 
       const dossier = buildBeverageDossier({
         state: e.state,
@@ -307,6 +351,7 @@ export default async function TerritoryMapPage({
         zip,
         typeName: e.typeName,
         archetype: dossier.archetype,
+        estSpend: dossier.estAnnualSpend,
         score,
         lat,
         lng,
@@ -401,6 +446,54 @@ export default async function TerritoryMapPage({
             ))}
           </div>
         </div>
+
+        {/* Trial-to-Pro Conversion Strip OR Public Unlock CTA */}
+        {subCtx.status === "trial" && cleanEmail ? (
+          <div className="mt-6 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-amber/45 bg-gradient-to-r from-amber/15 via-panel to-panel p-4">
+            <div>
+              <p className="font-mono text-[11px] font-bold tracking-[0.14em] text-amber">
+                ⏳ 7-DAY FREE TRIAL · {subCtx.trialDaysLeft} DAY
+                {subCtx.trialDaysLeft === 1 ? "" : "S"} REMAINING
+              </p>
+              <p className="mt-1 text-sm text-cream/90">
+                Lock in your{" "}
+                <strong className="text-cream">
+                  {cleanState ? stateFullName(cleanState) : "Multi-State"} Pro Seat ($249/mo · 3
+                  States + Instant Slack Alerts)
+                </strong>{" "}
+                before our 5-seat cap fills.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2.5">
+              <a
+                href={exportUrl(cleanEmail)}
+                className="rounded-lg border border-line bg-ink px-3.5 py-2 font-mono text-[11px] text-cream/85 hover:border-amber/50 hover:text-amber"
+              >
+                DOWNLOAD CSV ↓
+              </a>
+              <a
+                href={checkoutUpgradeUrl(cleanEmail, "pro")}
+                className="rounded-lg bg-amber px-4 py-2 font-mono text-[11px] font-bold tracking-[0.1em] text-[#140b0e] hover:brightness-110"
+              >
+                UPGRADE TO PRO ($249/MO) →
+              </a>
+            </div>
+          </div>
+        ) : !isSubscriberView ? (
+          <div className="mt-6 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-amber/35 bg-amber/5 p-4">
+            <p className="text-sm text-cream/85">
+              <strong className="text-amber">Same-day venues are masked for public visitors.</strong>{" "}
+              Start a free 7-day trial (no card) to unlock exact street addresses, LLCs, and
+              multi-stop Google Maps routes instantly.
+            </p>
+            <Link
+              href="/#pricing"
+              className="shrink-0 rounded-lg bg-amber px-4 py-2 font-mono text-[11px] font-bold tracking-[0.1em] text-[#140b0e] hover:brightness-110"
+            >
+              UNLOCK FREE FOR 7 DAYS →
+            </Link>
+          </div>
+        ) : null}
 
         <div className="mt-6">
           <TerritoryMap pins={displayPins} isSubscriberView={isSubscriberView} />

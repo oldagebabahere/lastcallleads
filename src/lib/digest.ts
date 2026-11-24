@@ -90,12 +90,14 @@ export async function runDigest(): Promise<{
     if (stateList.length === 0) continue;
 
     const since = sub.lastDigestAt ?? dayAgo;
+    const freshWindow = new Date(Date.now() - 21 * 86_400_000);
     const cityWant = (sub.cityFilter ?? "").trim();
 
-    // Push down state + non-TTB + optional city filter into SQL before capping.
+    // Push down state + strict 21-day occurrence freshness + non-TTB + optional city filter.
     const conds = [
       inArray(events.state, stateList),
       gt(events.detectedAt, since),
+      gt(events.occurredAt, freshWindow),
       or(isNull(events.licenseKey), notLike(events.licenseKey, "TTB-%")),
     ];
     if (cityWant) {

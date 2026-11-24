@@ -9,6 +9,8 @@ import { ensureSchema } from "@/db/bootstrap";
 import { siteUrl } from "@/lib/site";
 import { createDodoCheckout, dodoConfigured } from "@/lib/dodo";
 import { sendTrialStarted } from "@/lib/email";
+import { sendTelegramOwner } from "@/lib/notify";
+import { scopedToken } from "@/lib/unsubscribe";
 import { eq } from "drizzle-orm";
 import { subscribers } from "@/db/schema";
 import { clientIp, rateLimit, tooManyRequests } from "@/lib/rate-limit";
@@ -85,12 +87,16 @@ export async function POST(req: Request) {
   // If they already used their 7-day trial in the past, route them to checkout (or explain cleanly).
   const alreadyTrialed = Boolean(cur && cur.trialEndsAt);
 
+  const buildWelcomeUrl = (stCsv: string, activePlan: string) =>
+    `/welcome?email=${encodeURIComponent(email)}&token=${encodeURIComponent(scopedToken(email, "unlock"))}&states=${encodeURIComponent(stCsv)}&plan=${encodeURIComponent(activePlan)}`;
+
   if (cur && cur.status === "trial" && cur.trialEndsAt && cur.trialEndsAt.getTime() > Date.now() && !wantCheckout) {
     return Response.json({
       ok: true,
       mode: "trial",
+      welcomeUrl: buildWelcomeUrl(cur.states, cur.plan),
       message:
-        "Your 7-day free trial is already active — check your inbox for your preferences link and tomorrow morning's digest.",
+        "Your 7-day free trial is already active — opening your live territory dashboard now.",
     });
   }
 
@@ -157,17 +163,23 @@ export async function POST(req: Request) {
     });
   }
 
-  // Send immediate trial confirmation with preferences & upgrade links.
+  // Send immediate trial confirmation WITH top 5 real live filings in their chosen state(s)!
   await sendTrialStarted({
     email,
     states: stateList.join(", "),
     plan,
   }).catch(() => undefined);
 
+  // Instant Telegram ping to owner when a real prospect starts a trial!
+  await sendTelegramOwner(
+    `🆕 NEW 7-DAY TRIAL SIGNUP!\nEmail: ${email}\nPlan: ${plan.toUpperCase()}\nStates: ${stateList.join(", ")}${refBy ? `\nReferred by: ${refBy}` : ""}`
+  ).catch(() => undefined);
+
   return Response.json({
     ok: true,
     mode: "trial",
+    welcomeUrl: buildWelcomeUrl(stateList.join(","), plan),
     message:
-      `7-day free trial live for ${stateList.join(", ")} (no card required). Check your inbox for your preferences link — your first morning digest arrives after the next sweep.`,
+      `7-day free trial live for ${stateList.join(", ")} (no card required). Loading your instant live leads now…`,
   });
 }

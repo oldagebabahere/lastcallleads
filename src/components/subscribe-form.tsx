@@ -45,6 +45,10 @@ export default function SubscribeForm({ plan }: { plan: "solo" | "pro" }) {
         window.location.href = data.checkoutUrl;
         return;
       }
+      if (data.ok && data.welcomeUrl) {
+        window.location.href = data.welcomeUrl;
+        return;
+      }
       if (data.ok) {
         setPhase("done");
         setMessage(data.message ?? "Your 7-day free trial is active.");

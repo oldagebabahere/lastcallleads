@@ -384,9 +384,8 @@ export default async function Dashboard({
             <div className="flex items-center justify-between">
               <p className="font-mono text-[11px] tracking-[0.18em] text-smoke">SYSTEM HEALTH</p>
               <span
-                className={`font-mono text-[10px] font-bold tracking-[0.15em] ${
-                  allCoreGreen ? "text-leaf" : "text-amber"
-                }`}
+                className={`font-mono text-[10px] font-bold tracking-[0.15em] ${allCoreGreen ? "text-leaf" : "text-amber"
+                  }`}
               >
                 {allCoreGreen ? "ALL GREEN" : "CHECK"}
               </span>
@@ -395,11 +394,10 @@ export default async function Dashboard({
               {coreChecks.map((c) => (
                 <span
                   key={c.label}
-                  className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 font-mono text-[10px] ${
-                    c.ok
-                      ? "border-leaf/40 bg-leaf/10 text-leaf"
-                      : "border-amber/40 bg-amber/10 text-amber"
-                  }`}
+                  className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 font-mono text-[10px] ${c.ok
+                    ? "border-leaf/40 bg-leaf/10 text-leaf"
+                    : "border-amber/40 bg-amber/10 text-amber"
+                    }`}
                 >
                   <span className={`h-1.5 w-1.5 rounded-full ${c.ok ? "bg-leaf" : "bg-amber"}`} />
                   {c.label}
@@ -506,13 +504,12 @@ export default async function Dashboard({
                         </p>
                       </div>
                       <span
-                        className={`shrink-0 rounded-full border px-2 py-0.5 font-mono text-[10px] font-bold ${
-                          m.status === "sent"
-                            ? "border-leaf/40 bg-leaf/10 text-leaf"
-                            : m.status === "dry_run"
-                              ? "border-amber/40 bg-amber/10 text-amber"
-                              : "border-blood/40 bg-blood/10 text-blood"
-                        }`}
+                        className={`shrink-0 rounded-full border px-2 py-0.5 font-mono text-[10px] font-bold ${m.status === "sent"
+                          ? "border-leaf/40 bg-leaf/10 text-leaf"
+                          : m.status === "dry_run"
+                            ? "border-amber/40 bg-amber/10 text-amber"
+                            : "border-blood/40 bg-blood/10 text-blood"
+                          }`}
                       >
                         {m.status.toUpperCase()}
                       </span>
@@ -599,13 +596,12 @@ export default async function Dashboard({
                       </p>
                     </div>
                     <span
-                      className={`shrink-0 rounded-full border px-2 py-0.5 font-mono text-[10px] font-bold ${
-                        isLive
-                          ? "border-leaf/40 bg-leaf/10 text-leaf"
-                          : isPaused
-                            ? "border-amber/40 bg-amber/10 text-amber"
-                            : "border-blood/40 bg-blood/10 text-blood"
-                      }`}
+                      className={`shrink-0 rounded-full border px-2 py-0.5 font-mono text-[10px] font-bold ${isLive
+                        ? "border-leaf/40 bg-leaf/10 text-leaf"
+                        : isPaused
+                          ? "border-amber/40 bg-amber/10 text-amber"
+                          : "border-blood/40 bg-blood/10 text-blood"
+                        }`}
                     >
                       {statusLabel}
                     </span>
@@ -707,16 +703,14 @@ export default async function Dashboard({
               {envDetails.map((c) => (
                 <div
                   key={c.title}
-                  className={`rounded-xl border p-3.5 ${
-                    c.ok ? "border-leaf/30 bg-leaf/5" : "border-amber/35 bg-amber/5"
-                  }`}
+                  className={`rounded-xl border p-3.5 ${c.ok ? "border-leaf/30 bg-leaf/5" : "border-amber/35 bg-amber/5"
+                    }`}
                 >
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-xs font-semibold text-cream">{c.title}</p>
                     <span
-                      className={`font-mono text-[10px] font-bold ${
-                        c.ok ? "text-leaf" : "text-amber"
-                      }`}
+                      className={`font-mono text-[10px] font-bold ${c.ok ? "text-leaf" : "text-amber"
+                        }`}
                     >
                       {c.ok ? "READY" : "OPTIONAL"}
                     </span>

@@ -16,6 +16,7 @@ export type TerritoryPin = {
   zip: string | null;
   typeName: string | null;
   archetype: string;
+  estSpend?: string;
   score: number;
   lat: number;
   lng: number;
@@ -38,6 +39,17 @@ function pinColor(eventType: string): string {
   return "#c4435a";
 }
 
+type LeafletMapHandle = {
+  setView: (c: [number, number], z: number) => void;
+  fitBounds: (b: [number, number][], opts?: object) => void;
+  remove: () => void;
+};
+type LeafletMarkerHandle = {
+  addTo: (m: unknown) => void;
+  bindPopup: (h: string) => void;
+  openPopup: () => void;
+};
+
 export default function TerritoryMap({
   pins,
   isSubscriberView,
@@ -46,8 +58,11 @@ export default function TerritoryMap({
   isSubscriberView: boolean;
 }) {
   const mapRef = useRef<HTMLDivElement>(null);
+  const mapInstanceRef = useRef<LeafletMapHandle | null>(null);
+  const markersRef = useRef<Map<number, LeafletMarkerHandle>>(new Map());
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [activeId, setActiveId] = useState<number | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>(() =>
     pins
       .filter((p) => !p.locked)
@@ -67,6 +82,18 @@ export default function TerritoryMap({
       if (prev.length >= 8) return prev;
       return [...prev, id];
     });
+  };
+
+  const focusPin = (pin: TerritoryPin) => {
+    setActiveId(pin.id);
+    const map = mapInstanceRef.current;
+    const marker = markersRef.current.get(pin.id);
+    if (map) {
+      map.setView([pin.lat, pin.lng], 12);
+    }
+    if (marker) {
+      marker.openPopup();
+    }
   };
 
   const autoPickTop = () => {
@@ -138,39 +165,43 @@ export default function TerritoryMap({
     const L = (
       window as unknown as {
         L: {
-          map: (el: HTMLElement, opts: object) => {
-            setView: (c: [number, number], z: number) => void;
-            fitBounds: (b: [number, number][], opts?: object) => void;
-            remove: () => void;
-          };
+          map: (el: HTMLElement, opts: object) => LeafletMapHandle;
           tileLayer: (url: string, opts: object) => { addTo: (m: unknown) => void };
-          circleMarker: (
-            c: [number, number],
-            opts: object
-          ) => {
-            addTo: (m: unknown) => void;
-            bindPopup: (h: string) => void;
-          };
+          circleMarker: (c: [number, number], opts: object) => LeafletMarkerHandle;
         };
       }
     ).L;
 
     const map = L.map(mapRef.current, { scrollWheelZoom: false });
-    L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
-      maxZoom: 18,
-      attribution: "&copy; OpenStreetMap &copy; CARTO",
-    }).addTo(map);
+    mapInstanceRef.current = map;
 
+    // 100% free, zero-API-key, zero-watermark Esri World Dark Gray Canvas + Road/City Labels
+    L.tileLayer(
+      "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}",
+      {
+        maxZoom: 16,
+        attribution: "Tiles &copy; Esri &mdash; Esri, DeLorme, NAVTEQ",
+      }
+    ).addTo(map);
+    L.tileLayer(
+      "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}",
+      {
+        maxZoom: 16,
+        opacity: 0.9,
+      }
+    ).addTo(map);
+
+    const markerMap = new Map<number, LeafletMarkerHandle>();
     const bounds: [number, number][] = [];
     for (const p of pins) {
       const color = pinColor(p.eventType);
       const isSelected = validSelected.includes(p.id);
       const marker = L.circleMarker([p.lat, p.lng], {
-        radius: isSelected ? 8 : p.score >= 70 ? 7 : 5,
-        color: isSelected ? "#ffffff" : color,
+        radius: isSelected ? 8 : p.score >= 70 ? 7 : 5.5,
+        color: isSelected ? "#ffffff" : "#140b0e",
         fillColor: color,
-        fillOpacity: 0.9,
-        weight: isSelected ? 2 : 1,
+        fillOpacity: 0.94,
+        weight: isSelected ? 2.2 : 1.2,
       });
       marker.addTo(map);
 
@@ -190,22 +221,24 @@ export default function TerritoryMap({
         : null;
 
       marker.bindPopup(
-        `<div style="font-family:system-ui,sans-serif;min-width:190px;color:#140b0e">
-          <div style="font-size:10px;font-weight:700;letter-spacing:0.08em;color:#8c4a14">${escHtml(signalLabel)} · SCORE ${p.score}</div>
-          <div style="font-size:14px;font-weight:700;margin-top:3px">${escHtml(p.displayName)}</div>
+        `<div style="font-family:system-ui,sans-serif;min-width:210px;color:#140b0e">
+          <div style="font-size:10px;font-weight:700;letter-spacing:0.08em;color:#8c4a14">${escHtml(signalLabel)} · SCORE ${p.score}/100</div>
+          <div style="font-size:15px;font-weight:700;margin-top:3px">${escHtml(p.displayName)}</div>
           <div style="font-size:12px;color:#444;margin-top:2px">${escHtml(addrText + locText)}</div>
-          <div style="font-size:11px;color:#666;margin-top:3px">${escHtml(p.archetype)}</div>
-          <div style="margin-top:8px;display:flex;gap:10px;font-size:11px;font-weight:700">
-            <a href="${escHtml(p.unlockHref)}" style="color:#7a2b3e;text-decoration:underline">${p.locked ? "Unlock Dossier →" : "Open Dossier →"}</a>
+          <div style="font-size:11px;color:#555;margin-top:3px">${escHtml(p.archetype)}${p.estSpend ? ` · <strong>${escHtml(p.estSpend)}</strong>` : ""}</div>
+          <div style="margin-top:9px;display:flex;gap:12px;font-size:11px;font-weight:700">
+            <a href="${escHtml(p.unlockHref)}" style="color:#7a2b3e;text-decoration:underline">${p.locked ? "Unlock Dossier →" : "Open Dossier & Script →"}</a>
             ${mapsLink ? `<a href="${escHtml(mapsLink)}" target="_blank" rel="noopener noreferrer" style="color:#0b57d0;text-decoration:underline">Google Maps ↗</a>` : ""}
           </div>
         </div>`
       );
+      markerMap.set(p.id, marker);
       bounds.push([p.lat, p.lng]);
     }
+    markersRef.current = markerMap;
 
     if (bounds.length >= 2) {
-      map.fitBounds(bounds, { padding: [32, 32], maxZoom: 12 });
+      map.fitBounds(bounds, { padding: [36, 36], maxZoom: 11 });
     } else if (bounds.length === 1) {
       map.setView(bounds[0], 11);
     } else {
@@ -213,6 +246,8 @@ export default function TerritoryMap({
     }
 
     return () => {
+      mapInstanceRef.current = null;
+      markersRef.current.clear();
       map.remove();
     };
   }, [ready, pins, validSelected]);
@@ -269,7 +304,7 @@ export default function TerritoryMap({
 
       {/* Map + Interactive Route Stop List */}
       <div className="grid gap-5 lg:grid-cols-[1fr_360px]">
-        <div className="overflow-hidden rounded-xl border border-line bg-ink">
+        <div className="overflow-hidden rounded-xl border border-line bg-[#1a1a1a]">
           {failed ? (
             <div className="flex h-[540px] flex-col items-center justify-center p-6 text-center">
               <MapPin className="h-7 w-7 text-amber" />
@@ -284,24 +319,30 @@ export default function TerritoryMap({
           )}
         </div>
 
-        {/* Selectable Venue Stop List */}
+        {/* Selectable Venue Stop List (Ranked Highest Score First!) */}
         <div className="flex h-[520px] flex-col overflow-hidden rounded-xl border border-line bg-panel lg:h-[600px]">
           <div className="flex items-center justify-between border-b border-line px-4 py-3">
-            <span className="font-mono text-[10px] tracking-[0.2em] text-amber">
-              FIELD VISIT ROUTE STOPS ({validSelected.length}/8)
+            <span className="font-mono text-[10px] tracking-[0.18em] text-amber">
+              PRIORITY ROUTE STOPS ({validSelected.length}/8)
             </span>
             <span className="font-mono text-[10px] text-faint">
-              {isSubscriberView ? "SUBSCRIBER UNLOCKED" : `${pins.length} PINS`}
+              {isSubscriberView ? "RANKED BY SCORE" : `${pins.length} PINS`}
             </span>
           </div>
           <div className="flex-1 divide-y divide-line/60 overflow-y-auto">
             {pins.map((p) => {
               const checked = validSelected.includes(p.id);
+              const isFocused = activeId === p.id;
               return (
                 <div
                   key={p.id}
-                  className={`flex items-start gap-2.5 px-3.5 py-3 transition-colors ${
-                    checked ? "bg-amber/10" : "hover:bg-panel2/50"
+                  onClick={() => focusPin(p)}
+                  className={`flex cursor-pointer items-start gap-2.5 px-3.5 py-3 transition-colors ${
+                    isFocused
+                      ? "bg-amber/15"
+                      : checked
+                        ? "bg-amber/8"
+                        : "hover:bg-panel2/50"
                   }`}
                 >
                   {p.locked ? (
@@ -309,7 +350,10 @@ export default function TerritoryMap({
                   ) : (
                     <button
                       type="button"
-                      onClick={() => toggleStop(p.id)}
+                      onClick={(ev) => {
+                        ev.stopPropagation();
+                        toggleStop(p.id);
+                      }}
                       aria-label={`Toggle ${p.displayName} in Google Maps route`}
                       className="mt-0.5 shrink-0 text-amber"
                     >
@@ -324,6 +368,7 @@ export default function TerritoryMap({
                     <div className="flex items-center justify-between gap-2">
                       <Link
                         href={p.unlockHref}
+                        onClick={(ev) => ev.stopPropagation()}
                         className={`truncate text-sm font-medium hover:text-amber ${
                           p.locked ? "locked-name text-smoke" : "text-cream"
                         }`}
@@ -338,15 +383,18 @@ export default function TerritoryMap({
                       {!p.locked && p.address ? `${p.address} · ` : ""}
                       {[p.city, p.state].filter(Boolean).join(", ")}
                     </p>
-                    <p className="mt-0.5 truncate text-[11px] text-faint">{p.archetype}</p>
+                    <p className="mt-0.5 truncate text-[11px] text-faint">
+                      {p.archetype}
+                      {p.estSpend ? ` · ${p.estSpend}` : ""}
+                    </p>
                   </div>
                 </div>
               );
             })}
           </div>
           <div className="border-t border-line bg-ink/70 px-4 py-3 font-mono text-[10px] text-smoke">
-            Check up to 8 venues → click <span className="text-amber">OPEN GOOGLE MAPS ROUTE</span>{" "}
-            for turn-by-turn field visits on your phone.
+            Click any venue to locate on map · check up to 8 stops →{" "}
+            <span className="text-amber">OPEN GOOGLE MAPS ROUTE</span>.
           </div>
         </div>
       </div>

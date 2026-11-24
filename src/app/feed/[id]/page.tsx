@@ -17,7 +17,7 @@ import type { Metadata } from "next";
 import { db, pool } from "@/db";
 import { ensureSchema } from "@/db/bootstrap";
 import { events, licenses, subscribers } from "@/db/schema";
-import { verifyScopedToken } from "@/lib/unsubscribe";
+import { checkoutUpgradeUrl, verifyScopedToken } from "@/lib/unsubscribe";
 import { buildBeverageDossier, parseEventMeta } from "@/lib/beverage-intel";
 import { scoreFiling, tierLabel } from "@/lib/lead-score";
 import { EventBadge, Footer, Nav, StatePill } from "@/components/ui";
@@ -95,8 +95,10 @@ export default async function LeadPage({
 
   const cut = embargoCutoff();
   let locked = e.occurredAt ? e.occurredAt.getTime() > cut.getTime() : false;
+  let trialViewerEmail: string | null = null;
+  let trialDaysLeft = 0;
 
-  if (locked && email && token) {
+  if (email && token) {
     try {
       const cleanEmail = email.trim().toLowerCase();
       if (verifyScopedToken(cleanEmail, token, "unlock")) {
@@ -110,7 +112,16 @@ export default async function LeadPage({
           s?.status === "trial" &&
           s.trialEndsAt &&
           new Date(s.trialEndsAt).getTime() > Date.now();
-        if (s?.status === "active" || trialLive) locked = false;
+        if (s?.status === "active" || trialLive) {
+          locked = false;
+          if (trialLive && s.trialEndsAt) {
+            trialViewerEmail = cleanEmail;
+            trialDaysLeft = Math.max(
+              1,
+              Math.ceil((new Date(s.trialEndsAt).getTime() - Date.now()) / 86_400_000)
+            );
+          }
+        }
       }
     } catch {
       // unlock must never break the page
@@ -267,6 +278,23 @@ export default async function LeadPage({
         >
           <ArrowLeft className="h-3.5 w-3.5" /> BACK TO FEED
         </Link>
+
+        {trialViewerEmail && (
+          <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber/45 bg-gradient-to-r from-amber/15 via-panel to-panel px-4 py-3">
+            <p className="text-xs text-cream/90">
+              <strong className="font-mono text-amber">
+                ⏳ TRIAL ({trialDaysLeft}d left) · FULL DOSSIER UNLOCKED
+              </strong>{" "}
+              — Lock in your Pro seat ($249/mo · 3 States + Instant Slack) before seats fill.
+            </p>
+            <a
+              href={checkoutUpgradeUrl(trialViewerEmail, "pro")}
+              className="shrink-0 rounded-lg bg-amber px-3.5 py-1.5 font-mono text-[11px] font-bold tracking-[0.1em] text-[#140b0e] hover:brightness-110"
+            >
+              LOCK IN PRO ($249/MO) →
+            </a>
+          </div>
+        )}
 
         <div className="mt-8 flex flex-wrap items-center gap-3">
           <EventBadge type={e.eventType} />

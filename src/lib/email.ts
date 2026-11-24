@@ -1,6 +1,7 @@
 // Email delivery via Resend (with automatic dry-run logging when RESEND_API_KEY is unset).
+import { and, desc, gt, inArray, notLike } from "drizzle-orm";
 import { db } from "@/db";
-import { emailLog, type FilingEvent, type Subscriber } from "@/db/schema";
+import { emailLog, events, licenses, type FilingEvent, type Subscriber } from "@/db/schema";
 import { BRAND } from "@/lib/brand";
 import { PUBLIC_CONFIG } from "@/lib/public-config";
 import {
@@ -11,7 +12,7 @@ import {
   scopedToken,
   unsubscribeUrls,
 } from "@/lib/unsubscribe";
-import { scoreFiling } from "@/lib/lead-score";
+import { dedupeKey, isJunkEntity, scoreFiling } from "@/lib/lead-score";
 import { buildBeverageDossier, parseEventMeta } from "@/lib/beverage-intel";
 import { isMailTransportConfigured, sendTransactionalMail } from "@/lib/mailer";
 import { formatStateNames, stateFullName } from "@/lib/states";
@@ -320,13 +321,19 @@ export function digestHtml(
 }
 
 // Sent immediately when a user starts their 7-day free trial (no card required).
+// Includes TOP 5 REAL LIVE FRESHLY FILED VENUES in their territory for instant wow-factor!
 export async function sendTrialStarted(input: {
   email: string;
   states: string;
   plan: string;
 }): Promise<{ status: SendStatus; detail: string }> {
   const prettyStates = formatStateNames(input.states);
-  const subject = `Your 7-day ${BRAND.name} trial is live (${prettyStates})`;
+  const stateCodes = input.states
+    .split(",")
+    .map((s) => s.trim().toUpperCase())
+    .filter(Boolean);
+  const primaryState = stateCodes[0] ?? "TX";
+  const subject = `Your 7-day ${BRAND.name} trial is live — Top 5 fresh filings in ${prettyStates}`;
   let status: SendStatus = "dry_run";
   let detail = "No mail transport configured — trial welcome logged, not sent";
   const ready = isMailTransportConfigured();
@@ -336,10 +343,92 @@ export async function sendTrialStarted(input: {
     detail = "NEXT_PUBLIC_BUSINESS_POSTAL_ADDRESS is required before emailing customers (CAN-SPAM).";
   } else if (ready) {
     const unsubscribe = unsubscribeUrls(input.email);
-    const upgradeLink = checkoutUpgradeUrl(
-      input.email,
-      input.plan === "pro" ? "pro" : "solo"
-    );
+    const proUpgradeLink = checkoutUpgradeUrl(input.email, "pro");
+    const soloUpgradeLink = checkoutUpgradeUrl(input.email, "solo");
+    const mapHref = `${siteUrl()}/map?state=${encodeURIComponent(primaryState)}&email=${encodeURIComponent(input.email)}&token=${encodeURIComponent(scopedToken(input.email, "unlock"))}`;
+
+    // Pull Top 5 real fresh filings in their chosen state(s) for instant Day-0 value!
+    let previewRowsHtml = "";
+    try {
+      const cutoff = new Date(Date.now() - 30 * 86_400_000);
+      const raw = await db
+        .select()
+        .from(events)
+        .where(
+          and(
+            inArray(events.state, stateCodes.length ? stateCodes : ["TX"]),
+            gt(events.occurredAt, cutoff),
+            notLike(events.licenseKey, "TTB-%")
+          )
+        )
+        .orderBy(desc(events.occurredAt))
+        .limit(80);
+
+      const best = new Map<string, { e: (typeof raw)[number]; score: number }>();
+      for (const e of raw) {
+        if (isJunkEntity(e.tradeName, e.ownerName, e.typeName)) continue;
+        const sc = scoreFiling({
+          eventType: e.eventType,
+          typeName: e.typeName,
+          city: e.city,
+          county: e.county,
+          occurredAt: e.occurredAt,
+          summary: e.summary,
+        }).value;
+        const dk = `${e.state}|${dedupeKey(e.tradeName ?? e.ownerName ?? e.summary, e.city)}`;
+        const prev = best.get(dk);
+        if (!prev || sc > prev.score) best.set(dk, { e, score: sc });
+      }
+      const top5 = [...best.values()].sort((a, b) => b.score - a.score).slice(0, 5);
+      const keys = top5.map((x) => x.e.licenseKey).filter((k): k is string => Boolean(k));
+      const licMap = new Map<string, { address: string | null; zip: string | null }>();
+      if (keys.length) {
+        const lics = await db
+          .select({
+            state: licenses.state,
+            key: licenses.licenseKey,
+            address: licenses.address,
+            zip: licenses.zip,
+          })
+          .from(licenses)
+          .where(
+            and(
+              inArray(licenses.state, stateCodes.length ? stateCodes : ["TX"]),
+              inArray(licenses.licenseKey, keys)
+            )
+          );
+        for (const l of lics) licMap.set(`${l.state}|${l.key}`, l);
+      }
+
+      if (top5.length > 0) {
+        previewRowsHtml = `<div style="margin:22px 0;border:1px solid #3a222a;border-radius:12px;background:#160d10;padding:16px">
+          <div style="font-family:monospace;font-size:10px;letter-spacing:0.18em;color:#e9a13b;font-weight:700;margin-bottom:10px">★ INSTANT STARTER DOSSIER — TOP ${top5.length} FRESH ACCOUNTS IN ${esc(prettyStates.toUpperCase())}</div>
+          ${top5
+            .map(({ e, score }) => {
+              const meta = parseEventMeta(e.payload);
+              const lic = e.licenseKey ? licMap.get(`${e.state}|${e.licenseKey}`) : undefined;
+              const addr = formatCleanAddress(
+                lic?.address ?? meta.address,
+                null,
+                e.city,
+                e.state,
+                lic?.zip ?? meta.zip
+              );
+              const href = filingUnlockUrl(e.id, input.email);
+              return `<div style="padding:10px 0;border-top:1px solid #2a1a1f">
+                <a href="${href}" style="color:#f6eee1;font-family:Georgia,serif;font-size:15px;font-weight:600;text-decoration:none">${esc(e.tradeName ?? e.ownerName ?? "New Venue")}</a>
+                &nbsp;<span style="background:#e9a13b22;border:1px solid #e9a13b55;color:#e9a13b;font-family:monospace;font-size:10px;font-weight:700;padding:1px 6px;border-radius:999px">${score}</span>
+                ${addr ? `<div style="margin-top:3px;color:#d6c7ba;font-size:12px">📍 ${esc(addr)}</div>` : ""}
+                <div style="margin-top:4px;font-family:monospace;font-size:10px"><a href="${href}" style="color:#e9a13b;text-decoration:none;font-weight:700">OPEN FULL DOSSIER &amp; CALL SCRIPT →</a></div>
+              </div>`;
+            })
+            .join("")}
+        </div>`;
+      }
+    } catch {
+      previewRowsHtml = "";
+    }
+
     const res = await sendTransactionalMail({
       from: alertFrom(),
       to: input.email,
@@ -350,16 +439,25 @@ export async function sendTrialStarted(input: {
         "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
       },
       html: `<!doctype html><html><body style="margin:0;background:#0b0906;color:#f2ead9;font-family:Arial,sans-serif">
-        <div style="max-width:620px;margin:auto;padding:36px 20px">
-          ${emailBrandHeader("7-Day Free Trial")}
-          <h1 style="font-family:Georgia,serif;font-size:30px;margin:12px 0">You are on the watch.</h1>
-          <p style="color:#c9bfae;line-height:1.7">Your 7-day free trial (no card required) is active for <strong style="color:#fff">${esc(prettyStates)}</strong>. Your first morning digest arrives after the next daily registry sweep.</p>
-          <p style="color:#c9bfae;line-height:1.7">Shape your feed now — filter by ZIP code, city, venue type, or connect Slack/Discord alerts:</p>
-          <p style="margin:20px 0">
-            <a style="background:#e9a13b;color:#1a0e12;padding:12px 22px;border-radius:999px;font-family:monospace;font-size:12px;font-weight:700;letter-spacing:0.08em;text-decoration:none;display:inline-block" href="${prefsUrl(input.email)}">CONFIGURE ZIP CODES &amp; FILTERS →</a>
-          </p>
-          <p style="color:#8d8375;font-size:13px;line-height:1.7">Ready to keep alerts running past day 7? <a style="color:#e9a13b" href="${upgradeLink}">Upgrade anytime →</a></p>
-          <p style="margin-top:24px;color:#777;font-size:11px;line-height:1.7;font-family:monospace">
+        <div style="max-width:620px;margin:auto;padding:32px 20px">
+          ${emailBrandHeader("7-Day Free Trial · Instant Access")}
+          <h1 style="font-family:Georgia,serif;font-size:28px;margin:8px 0">Your territory is unlocked.</h1>
+          <p style="color:#c9bfae;font-size:14px;line-height:1.7">Your 7-day free trial (no card required) is live for <strong style="color:#fff">${esc(prettyStates)}</strong>. Every morning we sweep the official state registries and send you newly filed bars, restaurants, and package stores 60–90 days before doors open.</p>
+          <div style="margin:18px 0">
+            <a style="background:#e9a13b;color:#140b0e;padding:11px 20px;border-radius:8px;font-family:monospace;font-size:12px;font-weight:700;letter-spacing:0.08em;text-decoration:none;display:inline-block" href="${mapHref}">📍 OPEN UNLOCKED TERRITORY MAP →</a>
+            &nbsp;&nbsp;
+            <a style="color:#e9a13b;font-family:monospace;font-size:11px;font-weight:700;text-decoration:none" href="${exportUrl(input.email)}">Download 30-Day CSV ↓</a>
+          </div>
+          ${previewRowsHtml}
+          <div style="margin:22px 0;padding:16px;border:1px solid #e9a13b55;border-radius:12px;background:#261218">
+            <div style="font-family:monospace;font-size:10px;letter-spacing:0.18em;color:#e9a13b;font-weight:700">LOCK YOUR TERRITORY SEAT (MAX 5 SEATS / STATE)</div>
+            <p style="margin:8px 0 12px;font-size:13px;color:#d6c7ba;line-height:1.6">Most reps upgrade to <strong style="color:#fff">Pro ($249/mo · 3 States + Instant Slack Alerts + Unlimited CRM CSV)</strong> during trial week so they lock their territory before competitors do.</p>
+            <a style="background:#e9a13b;color:#140b0e;padding:10px 18px;border-radius:8px;font-family:monospace;font-size:11px;font-weight:700;text-decoration:none;display:inline-block" href="${proUpgradeLink}">UPGRADE TO PRO ($249/MO) →</a>
+            &nbsp;&nbsp;
+            <a style="color:#c9bfae;font-family:monospace;font-size:11px;text-decoration:underline" href="${soloUpgradeLink}">Solo 1-State ($129/mo)</a>
+          </div>
+          <p style="margin-top:20px;color:#777;font-size:11px;line-height:1.7;font-family:monospace">
+            <a style="color:#e9a13b" href="${prefsUrl(input.email)}">Filter ZIP codes &amp; Slack webhooks</a> ·
             <a style="color:#e9a13b" href="${exportUrl(input.email)}">Download 30-day CSV</a> ·
             <a style="color:#e9a13b" href="${unsubscribe.page}">Stop alert emails</a><br />
             ${esc(PUBLIC_CONFIG.legalName)}${PUBLIC_CONFIG.postalAddress ? ` · ${esc(PUBLIC_CONFIG.postalAddress)}` : ""}

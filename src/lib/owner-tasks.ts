@@ -11,8 +11,8 @@ import { siteUrl } from "@/lib/site";
 import { alertFrom, isOwnerAddress } from "@/lib/email";
 import { isMailTransportConfigured, sendTransactionalMail } from "@/lib/mailer";
 import { publishLinkedInOfficial, sendTelegramOwner } from "@/lib/notify";
-import { stateFullName } from "@/lib/states";
-import { checkoutUpgradeUrl, prefsUrl, unsubscribeUrls } from "@/lib/unsubscribe";
+import { formatStateNames, stateFullName } from "@/lib/states";
+import { checkoutUpgradeUrl, exportUrl, prefsUrl, scopedToken, unsubscribeUrls } from "@/lib/unsubscribe";
 
 function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -63,18 +63,18 @@ async function sendToOwner(opts: {
 const TIPS: { minDay: number; subject: string; body: string }[] = [
   {
     minDay: 1,
-    subject: "Tip 1 of 3 — call the NEW applications first",
-    body: `The freshest filings are the highest-converting leads: a venue that applied this week is 60–90 days from opening and hasn't chosen suppliers yet. Open today's digest, look for the FILED rows with a 70+ score, and call two before lunch.`,
+    subject: "Tip 1 of 3 — plot your top 8 new bars on Google Maps in 1 click",
+    body: `The highest-converting hospitality deals happen 60–90 days before opening night — before a venue picks its spirits distributor, POS, or liquor insurance. Open your live Territory Map, check the highest-scored FILED venues (70+), and launch a multi-stop Google Maps driving route right on your phone.`,
   },
   {
     minDay: 3,
-    subject: "Tip 2 of 3 — narrow to your exact ZIP codes",
-    body: `Don't sift through the whole state. Filter your morning digest down to your exact cities, ZIP codes, or venue types (e.g. Full Bars only) so every row in your inbox is a territory call.`,
+    subject: "Tip 2 of 3 — get instant Slack pings + filter down to your exact ZIPs",
+    body: `Don't sift through an entire state. Lock your feed down to your exact ZIP codes or connect your team's Slack/Discord webhook so your reps see every full-bar application the morning it posts — before competitors know the venue exists.`,
   },
   {
     minDay: 5,
-    subject: "Tip 3 of 3 — your trial ends in 2 days",
-    body: `Your 7-day trial closes soon. One landed hospitality account typically pays for an entire year of daily alerts. Lock in your territory now so your morning feed doesn't pause.`,
+    subject: "48 hours left on your trial — hold your territory seat (Max 5/state)",
+    body: `Your 7-day trial ends in 2 days. Every state is strictly capped at 5 active subscribers so you're never sharing fresh bar openings with 50 competing reps. One landed full-bar account typically equals $18K–$60K+ in first-year wholesale orders — paying for Pro 70x over.`,
   },
 ];
 
@@ -126,18 +126,25 @@ export async function runTrialTips(): Promise<{ sent: number; skipped: number }>
     if (mailReady) {
       try {
         const unsubscribe = unsubscribeUrls(s.email);
+        const primarySt = (s.states.split(",")[0] ?? "TX").trim().toUpperCase();
+        const mapHref = `${siteUrl()}/map?state=${encodeURIComponent(primarySt)}&email=${encodeURIComponent(s.email)}&token=${encodeURIComponent(scopedToken(s.email, "unlock"))}`;
+        const proHref = checkoutUpgradeUrl(s.email, "pro");
+        const soloHref = checkoutUpgradeUrl(s.email, "solo");
         const ctaHref =
           nextTip.minDay === 5
-            ? checkoutUpgradeUrl(s.email, s.plan === "pro" ? "pro" : "solo")
+            ? proHref
             : nextTip.minDay === 3
               ? prefsUrl(s.email)
-              : `${siteUrl()}/feed`;
+              : mapHref;
         const ctaLabel =
           nextTip.minDay === 5
-            ? "LOCK IN PAID ACCESS →"
+            ? "LOCK IN PRO SEAT ($249/MO · 3 STATES) →"
             : nextTip.minDay === 3
-              ? "SET MY ZIP CODES & FILTERS →"
-              : "OPEN TODAY'S FILINGS →";
+              ? "SET MY ZIP CODES & SLACK ALERTS →"
+              : "OPEN MY UNLOCKED TERRITORY MAP →";
+
+        const logoSrc = `${siteUrl()}/brand-logo.png`;
+        const prettySt = formatStateNames(s.states);
 
         const res = await sendTransactionalMail({
           from: alertFrom(),
@@ -149,10 +156,30 @@ export async function runTrialTips(): Promise<{ sent: number; skipped: number }>
             "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
           },
           html: `<!doctype html><html><body style="margin:0;background:#0b0906;color:#f2ead9;font-family:Georgia,serif">
-            <div style="max-width:620px;margin:auto;padding:36px 20px">
-              <div style="font-size:11px;letter-spacing:0.25em;color:#e9a13b;text-transform:uppercase;font-family:monospace">${esc(BRAND.name)} · TRIAL WEEK</div>
-              <p style="color:#c9bfae;font-size:15px;line-height:1.8">${esc(nextTip.body)}</p>
-              <p style="margin:24px 0"><a href="${ctaHref}" style="background:#e9a13b;color:#1a0e12;padding:12px 24px;border-radius:999px;font-family:monospace;font-size:12px;font-weight:700;letter-spacing:0.08em;text-decoration:none;display:inline-block">${ctaLabel}</a></p>
+            <div style="max-width:620px;margin:auto;padding:32px 20px">
+              <table role="presentation" style="width:100%;border-collapse:collapse;margin-bottom:18px">
+                <tr>
+                  <td style="width:44px;vertical-align:middle;padding-right:10px">
+                    <img src="${logoSrc}" alt="${esc(BRAND.name)}" width="38" height="38" style="display:block;width:38px;height:38px;border-radius:9px;border:1px solid #e9a13b66" />
+                  </td>
+                  <td style="vertical-align:middle">
+                    <div style="font-size:11px;letter-spacing:0.22em;color:#e9a13b;text-transform:uppercase;font-family:monospace;font-weight:700">${esc(BRAND.name)} · TRIAL DAY ${day} OF 7</div>
+                    <div style="font-size:10px;color:#988689;font-family:monospace;margin-top:2px">Territory: ${esc(prettySt)}</div>
+                  </td>
+                </tr>
+              </table>
+              <p style="color:#d6c7ba;font-size:15px;line-height:1.8">${esc(nextTip.body)}</p>
+              <p style="margin:24px 0">
+                <a href="${ctaHref}" style="background:#e9a13b;color:#140b0e;padding:12px 22px;border-radius:8px;font-family:monospace;font-size:12px;font-weight:700;letter-spacing:0.08em;text-decoration:none;display:inline-block">${ctaLabel}</a>
+              </p>
+              <div style="margin:20px 0;padding:14px 16px;border:1px solid #3a222a;border-radius:10px;background:#190e12;font-family:monospace;font-size:11px;color:#c9bfae;line-height:1.7">
+                Ready to lock in your territory?
+                <a href="${proHref}" style="color:#e9a13b;font-weight:700;margin-left:6px">Pro 3-State ($249/mo) →</a>
+                &nbsp;·&nbsp;
+                <a href="${soloHref}" style="color:#c9bfae">Solo 1-State ($129/mo)</a>
+                &nbsp;·&nbsp;
+                <a href="${exportUrl(s.email)}" style="color:#c9bfae">Download CSV ↓</a>
+              </div>
               <p style="color:#8d8375;font-size:11px;line-height:1.7;font-family:monospace">
                 <a href="${unsubscribe.page}" style="color:#e9a13b">Stop alert emails</a>
               </p>
