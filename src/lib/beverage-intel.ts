@@ -62,6 +62,7 @@ const STATE_RUNWAY_DAYS: Record<string, number> = {
   TX: 60,
   NY: 90,
   CA: 75,
+  FL: 60,
   IL: 35,
   WA: 45,
   OR: 45,
@@ -230,10 +231,15 @@ export function buildBeverageDossier(f: FilingInput): BeverageDossier {
         ? "Active Status Transition · Immediate Pitch Window"
         : "Permit Cleared · Immediate Stocking & Opening Window";
 
+  const isFl = f.state.toUpperCase() === "FL";
   const entityLookup =
     market?.entityLookupUrl ??
-    `https://opencorporates.com/companies?q=${encodeURIComponent(entity)}`;
-  const entityLookupLabel = market?.entityLookupLabel ?? "OpenCorporates LLC Search";
+    (isFl
+      ? "https://search.sunbiz.org/Inquiry/CorporationSearch/ByName"
+      : `https://opencorporates.com/companies?q=${encodeURIComponent(entity)}`);
+  const entityLookupLabel =
+    market?.entityLookupLabel ??
+    (isFl ? "FL Sunbiz Entity Search" : "OpenCorporates LLC Search");
 
   const ageDays = f.occurredAt
     ? Math.max(0, Math.floor((Date.now() - new Date(f.occurredAt).getTime()) / 86_400_000))

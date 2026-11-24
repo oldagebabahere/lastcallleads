@@ -28,6 +28,7 @@ import { getHealthMap } from "@/lib/pourwatch";
 import { hoursAgoMs } from "@/lib/queries";
 import { LIVE_STATE_CODES, stateFullName } from "@/lib/states";
 import RunButtons from "@/components/run-buttons";
+import FlCsvUploader from "@/components/fl-csv-uploader";
 import SubscriberActions from "@/components/subscriber-actions";
 import AddClientForm from "@/components/add-client-form";
 import { fmtDate } from "@/lib/fmt";
@@ -559,6 +560,19 @@ export default async function Dashboard({
 
         {/* ===== 5. COLLAPSIBLE DEEP DETAILS (CLOSED BY DEFAULT — ZERO CLUTTER!) ===== */}
         <section className="space-y-3">
+          {/* Drawer 0: Florida 1-Click Official DBPR CSV Importer */}
+          <details className="rounded-2xl border border-amber/40 bg-panel">
+            <summary className="flex cursor-pointer list-none items-center justify-between px-5 py-4">
+              <span className="font-mono text-xs font-bold tracking-[0.14em] text-amber">
+                🌴 FLORIDA DBPR 1-CLICK CSV IMPORTER (FOR FLORIDA TRIAL/PAID CUSTOMERS)
+              </span>
+              <span className="font-mono text-xs text-amber">EXPAND ▾</span>
+            </summary>
+            <div className="border-t border-line p-5">
+              <FlCsvUploader adminKey={key2} />
+            </div>
+          </details>
+
           {/* Drawer 1: 9 Markets + 18 Feeds */}
           <details className="rounded-2xl border border-line bg-panel">
             <summary className="flex cursor-pointer list-none items-center justify-between px-5 py-4">

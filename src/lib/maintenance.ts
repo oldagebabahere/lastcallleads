@@ -39,7 +39,9 @@ export async function runMaintenance(): Promise<MaintenanceReport> {
   `);
 
   // 2) Purge old TTB federal filler + non-live states from previous builds (frees 70%+ DB space!)
-  const liveListSql = LIVE_STATE_CODES.map((s) => `'${s}'`).join(", ");
+  // Keep FL alongside the 9 auto-daily states so manually imported official FL DBPR filings are preserved.
+  const keepStates = [...LIVE_STATE_CODES, "FL"];
+  const liveListSql = keepStates.map((s) => `'${s}'`).join(", ");
   const [legacyLic, legacyEvt, legacyPros] = await Promise.all([
     pool
       .query<CountRow>(`

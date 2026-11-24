@@ -57,6 +57,15 @@ const CITY_COORDS: Record<string, [number, number]> = {
   "st louis,mo": [38.627, -90.1994],
   "saint louis,mo": [38.627, -90.1994],
   "kansas city,mo": [39.0997, -94.5786],
+  "miami,fl": [25.7617, -80.1918],
+  "miami beach,fl": [25.7907, -80.13],
+  "fort lauderdale,fl": [26.1224, -80.1373],
+  "orlando,fl": [28.5383, -81.3792],
+  "tampa,fl": [27.9506, -82.4572],
+  "jacksonville,fl": [30.3322, -81.6557],
+  "st petersburg,fl": [27.7676, -82.6403],
+  "west palm beach,fl": [26.7153, -80.0534],
+  "naples,fl": [26.142, -81.7948],
 };
 
 const STATE_CENTERS: Record<string, [number, number]> = {
@@ -69,6 +78,7 @@ const STATE_CENTERS: Record<string, [number, number]> = {
   CO: [39.1, -105.5],
   CT: [41.6, -72.7],
   MO: [38.5, -92.5],
+  FL: [27.66, -81.51],
 };
 
 function jitter(id: number, scale = 0.035): [number, number] {
@@ -222,7 +232,8 @@ export default async function TerritoryMapPage({
 }) {
   const { state, signal, email, token } = await searchParams;
   const upper = state?.toUpperCase();
-  const cleanState = upper && LIVE_STATE_SET.has(upper) ? upper : undefined;
+  const cleanState =
+    upper && (LIVE_STATE_SET.has(upper) || upper === "FL") ? upper : undefined;
   const cleanEmail = (email ?? "").trim().toLowerCase();
   const subCtx = await getSubscriberContext(cleanEmail, token);
   const isSubscriberView = subCtx.unlocked;
