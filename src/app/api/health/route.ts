@@ -1,7 +1,9 @@
 import { db } from "@/db";
 import { sourceHealth } from "@/db/schema";
 import { and, eq, inArray, sql } from "drizzle-orm";
+import { cronAuthorized } from "@/lib/auth";
 import { dodoConfigured } from "@/lib/dodo";
+import { syncInboundRepliesToTelegram } from "@/lib/imap-inbox-sync";
 import { ALL_STATE_SOURCES } from "@/lib/ingest-aggregator";
 import {
   getOutreachSmtpAccounts,
@@ -12,7 +14,7 @@ import { PUBLIC_CONFIG } from "@/lib/public-config";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(req: Request) {
   let dbOk = false;
   let pausedSources = 0;
   let lastIngestHoursAgo: number | null = null;
@@ -55,6 +57,12 @@ export async function GET() {
   if (!mailReady) missing.push("RESEND_API_KEY or SMTP_USER+SMTP_PASS");
   if (!PUBLIC_CONFIG.postalAddress) missing.push("NEXT_PUBLIC_BUSINESS_POSTAL_ADDRESS");
 
+  // When pinged by the authenticated Google Apps Script watchdog, also sync Gmail replies -> Telegram!
+  const inboxSync =
+    dbOk && cronAuthorized(req)
+      ? await syncInboundRepliesToTelegram().catch(() => null)
+      : null;
+
   const status = dbOk ? 200 : 500;
   return Response.json(
     {
@@ -75,6 +83,7 @@ export async function GET() {
       outreachAccounts,
       telegramReady: Boolean(process.env.TELEGRAM_BOT_TOKEN?.trim() && process.env.TELEGRAM_CHAT_ID?.trim()),
       linkedinReady: Boolean(process.env.LINKEDIN_ACCESS_TOKEN?.trim()),
+      ...(inboxSync ? { inboxSync } : {}),
       missingRecommended: missing,
     },
     { status }

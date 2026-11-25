@@ -2,6 +2,7 @@
 // insurance agents, beverage sellers, bars) from OpenStreetMap. Free and
 // unlimited. Manual run: ?state=TX (any 2-letter code).
 import { cronAuthorized } from "@/lib/auth";
+import { syncInboundRepliesToTelegram } from "@/lib/imap-inbox-sync";
 import { harvestProspects, PROSPECT_CATEGORIES, todaysState } from "@/lib/prospects";
 import { ensureSchema } from "@/db/bootstrap";
 import { db } from "@/db";
@@ -16,6 +17,7 @@ export async function GET(req: Request) {
     return Response.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
   await ensureSchema();
+  await syncInboundRepliesToTelegram().catch(() => undefined);
   const url = new URL(req.url);
   const wanted = (url.searchParams.get("state") ?? "").trim().toUpperCase();
   const state = /^[A-Z]{2}$/.test(wanted) ? wanted : todaysState();

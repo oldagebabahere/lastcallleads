@@ -83,6 +83,12 @@ function harvestProspectsPulse() {
   Logger.log("Prospect harvest (" + res.getResponseCode() + "): " + res.getContentText());
 }
 
+// Watches all 5 Gmail accounts every 10 minutes and pushes any real reply straight to Telegram!
+function checkInboxReplies() {
+  const res = callWithRetry("/api/cron/inbox");
+  Logger.log("Inbox -> Telegram sync (" + res.getResponseCode() + "): " + res.getContentText());
+}
+
 // Run THIS function ONCE to activate 24/7 hands-free self-healing autopilot forever!
 function installAutopilotTriggers() {
   // Remove any old duplicate triggers first
@@ -91,17 +97,21 @@ function installAutopilotTriggers() {
   // 1) Staggered outreach pulse every 2 hours (human-paced deliverability!)
   ScriptApp.newTrigger("sendOutreachPulse").timeBased().everyHours(2).create();
 
-  // 2) Self-healing health watchdog every 6 hours (auto-heals any broken government feed!)
+  // 2) Live Gmail reply -> Telegram forwarder every 10 minutes (24/7!)
+  ScriptApp.newTrigger("checkInboxReplies").timeBased().everyMinutes(10).create();
+
+  // 3) Self-healing health watchdog every 6 hours (auto-heals any broken government feed!)
   ScriptApp.newTrigger("healthWatchdog").timeBased().everyHours(6).create();
 
-  // 3) Backup daily ingest + digest heartbeat every morning at 12:00 UTC
+  // 4) Backup daily ingest + digest heartbeat every morning at 12:00 UTC
   ScriptApp.newTrigger("dailyHeartbeatBackup").timeBased().everyDays(1).atHour(12).create();
 
-  // 4) Daily B2B buyer harvest (rotates across all 9 live states automatically)
+  // 5) Daily B2B buyer harvest (rotates across all 9 live states automatically)
   ScriptApp.newTrigger("harvestProspectsPulse").timeBased().everyDays(1).atHour(9).create();
 
-  // 5) Run an immediate self-check + prospect harvest right now!
+  // 6) Run an immediate self-check + inbox sync + prospect harvest right now!
   healthWatchdog();
+  checkInboxReplies();
   harvestProspectsPulse();
   Logger.log("SELF-HEALING AUTOPILOT INSTALLED! Zero manual clicks needed.");
 }

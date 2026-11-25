@@ -17,6 +17,7 @@ import { harvestDistributors } from "./distributors";
 import { harvestProspects, isJunkProspect } from "./prospects";
 import { runByState } from "./ingest-aggregator";
 import { sendTelegramOwner } from "./notify";
+import { syncInboundRepliesToTelegram, type InboxSyncReport } from "./imap-inbox-sync";
 import { rescueAndEngageImapPeer } from "./imap-warmup";
 import {
   getOutreachSmtpAccounts,
@@ -49,6 +50,7 @@ export type AutoOutreachReport = {
   skipped: number;
   accountsAvailable: number;
   warmup?: WarmupRingReport;
+  inboxSync?: InboxSyncReport;
   reason?: string;
 };
 
@@ -487,6 +489,11 @@ export async function runAutoOutreach(
   const smtpPool = getOutreachSmtpAccounts();
   const hasTransport = isOutreachTransportConfigured();
   const forceDry = opts.dryRun === true || !hasTransport;
+
+  // Sync any inbound replies across all Gmail accounts -> Telegram FIRST (and auto-pause follow-ups!)
+  const inboxSync = !forceDry
+    ? await syncInboundRepliesToTelegram().catch(() => undefined)
+    : undefined;
 
   // Automatically warm up all Gmail mailboxes (Not-Spam rescue + Star + Reply ring) up to 2x/day!
   const warmup =
@@ -982,5 +989,6 @@ export async function runAutoOutreach(
     skipped: candidates.length - queue.length,
     accountsAvailable: smtpPool.length || (process.env.RESEND_API_KEY ? 1 : 0),
     ...(warmup ? { warmup } : {}),
+    ...(inboxSync ? { inboxSync } : {}),
   };
 }
