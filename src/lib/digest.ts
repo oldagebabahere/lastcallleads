@@ -145,6 +145,48 @@ export async function runDigest(): Promise<{
       }
     }
 
+    // Multi-Unit Whale Group Detector across ALL 9 states: identify applicants whose
+    // legal LLC/owner already holds 2+ active alcohol licenses in our 249K+ state register!
+    const ownerCandidates = Array.from(
+      new Set(
+        raw
+          .map((e) => (e.ownerName ?? "").trim().toLowerCase())
+          .filter((n) => n.length >= 5 && !isJunkEntity(n, null))
+      )
+    ).slice(0, 300);
+    if (ownerCandidates.length > 0) {
+      try {
+        const multiRes = await pool.query<{ owner_low: string; units: number }>(
+          `SELECT lower(owner_name) AS owner_low, count(*)::int AS units
+           FROM licenses
+           WHERE state = ANY($1::text[])
+             AND kind = 'active'
+             AND lower(owner_name) = ANY($2::text[])
+           GROUP BY lower(owner_name)
+           HAVING count(*) >= 2`,
+          [stateList, ownerCandidates]
+        );
+        const unitsByOwner = new Map(
+          multiRes.rows.map((r) => [r.owner_low, Number(r.units)])
+        );
+        for (const e of raw) {
+          if (!e.licenseKey || !e.ownerName) continue;
+          const units = unitsByOwner.get(e.ownerName.trim().toLowerCase());
+          if (units && units >= 2) {
+            const cur = extra.get(`${e.state}|${e.licenseKey}`) ?? {
+              phone: null,
+              address: null,
+              zip: null,
+              typeName: e.typeName,
+            };
+            extra.set(`${e.state}|${e.licenseKey}`, { ...cur, existingUnits: units });
+          }
+        }
+      } catch {
+        // non-blocking enrichment
+      }
+    }
+
     // TX Multi-Unit Operator enrichment: match venue or parent LLC against TX Comptroller alcohol receipts!
     if (stateList.includes("TX")) {
       const txNames = Array.from(

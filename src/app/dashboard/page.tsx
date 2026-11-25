@@ -2,7 +2,7 @@
 // 4 KPI cards, 5 quick actions, side-by-side Customers + Live Activity,
 // and tidy collapsible drawers for deep diagnostics. Zero clutter.
 import Link from "next/link";
-import { desc, inArray, sql } from "drizzle-orm";
+import { desc, inArray, ne, sql } from "drizzle-orm";
 import { db, pool } from "@/db";
 import { ensureSchema } from "@/db/bootstrap";
 import {
@@ -137,7 +137,12 @@ export default async function Dashboard({
         .groupBy(licenses.state)
         .orderBy(desc(sql`count(*)`)),
       db.select().from(ingestRuns).orderBy(desc(ingestRuns.id)).limit(40),
-      db.select().from(emailLog).orderBy(desc(emailLog.id)).limit(10),
+      db
+        .select()
+        .from(emailLog)
+        .where(ne(emailLog.toEmail, "imap-watcher@lastcallleads.internal"))
+        .orderBy(desc(emailLog.id))
+        .limit(10),
       db.select().from(subscribers).orderBy(desc(subscribers.id)).limit(30),
       db.select().from(contactMessages).orderBy(desc(contactMessages.id)).limit(10),
       db.select({ n: sql<number>`count(*)::int` }).from(events),
@@ -319,6 +324,13 @@ export default async function Dashboard({
             >
               Prospects CSV
             </Link>
+            <a
+              href={`/api/admin/export?type=tx-goldmine&key=${encodeURIComponent(key2)}`}
+              className="rounded-lg border border-amber/40 bg-ink px-3 py-1.5 text-amber hover:border-amber"
+              title="Download Top 2,500 Highest-Revenue Texas Bars CSV ($399 Pack)"
+            >
+              TX Goldmine CSV ↓
+            </a>
             <Link
               href={`/dashboard/map?key=${encodeURIComponent(key2)}`}
               className="rounded-lg border border-line bg-ink px-3 py-1.5 text-cream/85 hover:border-amber/50 hover:text-amber"
@@ -507,12 +519,12 @@ export default async function Dashboard({
                       <span
                         className={`shrink-0 rounded-full border px-2 py-0.5 font-mono text-[10px] font-bold ${m.status === "sent"
                           ? "border-leaf/40 bg-leaf/10 text-leaf"
-                          : m.status === "dry_run"
+                          : m.status === "received" || m.status === "dry_run"
                             ? "border-amber/40 bg-amber/10 text-amber"
                             : "border-blood/40 bg-blood/10 text-blood"
                           }`}
                       >
-                        {m.status.toUpperCase()}
+                        {m.status === "received" ? "INBOUND" : m.status.toUpperCase()}
                       </span>
                     </div>
                   ))

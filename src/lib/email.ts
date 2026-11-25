@@ -34,6 +34,7 @@ export type DigestExtra = Map<
     typeName: string | null;
     sourceUrl?: string | null;
     monthlyRevenue?: number | null;
+    existingUnits?: number | null;
   }
 >;
 export type DigestOpts = { total?: number; extra?: DigestExtra };
@@ -121,17 +122,31 @@ export function digestHtml(
   opts: DigestOpts = {}
 ): string {
   const unsubscribe = unsubscribeUrls(sub.email);
-  const scored = evts.map((e) => ({
-    e,
-    score: scoreFiling({
+  const scored = evts.map((e) => {
+    const baseScore = scoreFiling({
       eventType: e.eventType,
       typeName: e.typeName,
       city: e.city,
       county: e.county,
       occurredAt: e.occurredAt,
       summary: e.summary,
-    }),
-  }));
+    });
+    const inf = e.licenseKey ? opts.extra?.get(`${e.state}|${e.licenseKey}`) : undefined;
+    const whaleBoost =
+      (inf?.monthlyRevenue && inf.monthlyRevenue >= 50_000 ? 15 : 0) +
+      (inf?.existingUnits && inf.existingUnits >= 2 ? 12 : 0);
+    return {
+      e,
+      score:
+        whaleBoost > 0
+          ? {
+              ...baseScore,
+              value: Math.min(99, baseScore.value + whaleBoost),
+              tier: "A" as const,
+            }
+          : baseScore,
+    };
+  });
   const rankedAll = [...scored].sort((a, b) => b.score.value - a.score.value);
   // Cap email body to Top 15 priority cards so Gmail never clips >102KB and reps scan fast.
   const ranked = rankedAll.slice(0, 15);
@@ -198,10 +213,18 @@ export function digestHtml(
         ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(fullAddr)}`
         : null;
 
-      const revBadge =
-        info?.monthlyRevenue && info.monthlyRevenue > 0
-          ? `<div style="margin-top:5px;display:inline-block;background:#e9a13b24;border:1px solid #e9a13b66;color:#e9a13b;font-family:monospace;font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px">★ EXISTING TX OPERATOR · $${Math.round(info.monthlyRevenue).toLocaleString()}/MO ALCOHOL VOLUME</div>`
-          : "";
+      const whaleBadges: string[] = [];
+      if (info?.existingUnits && info.existingUnits >= 2) {
+        whaleBadges.push(
+          `<span style="display:inline-block;margin-right:6px;margin-top:5px;background:#7dc98f22;border:1px solid #7dc98f66;color:#7dc98f;font-family:monospace;font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px">🐋 WHALE MULTI-UNIT GROUP · OWNS ${info.existingUnits} ACTIVE VENUES</span>`
+        );
+      }
+      if (info?.monthlyRevenue && info.monthlyRevenue > 0) {
+        whaleBadges.push(
+          `<span style="display:inline-block;margin-top:5px;background:#e9a13b24;border:1px solid #e9a13b66;color:#e9a13b;font-family:monospace;font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px">★ EXISTING TX OPERATOR · $${Math.round(info.monthlyRevenue).toLocaleString()}/MO ALCOHOL VOLUME</span>`
+        );
+      }
+      const revBadge = whaleBadges.length ? `<div>${whaleBadges.join("")}</div>` : "";
 
       const unlockHref = filingUnlockUrl(e.id, sub.email);
       return `<tr>

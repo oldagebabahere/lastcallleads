@@ -72,9 +72,11 @@ async function craftGroqOpener(opts: {
       ? "commercial liquor liability insurance before their landlord asks for a COI"
       : opts.category === "attorney"
         ? "monitoring new pending liquor filings and transfers in their county"
-        : opts.category === "brewery"
-          ? "getting craft draft handles and cold-box cans locked in before opening night"
-          : "getting opening spirits, wine list, and beverage accounts locked in 60-90 days before doors open";
+        : opts.category === "equipment"
+          ? "quoting POS systems, ice machines, draft lines, and bar build-out equipment 60-90 days before opening"
+          : opts.category === "brewery"
+            ? "getting craft draft handles and cold-box cans locked in before opening night"
+            : "getting opening spirits, wine list, and beverage accounts locked in 60-90 days before doors open";
 
   try {
     const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
@@ -698,7 +700,14 @@ export async function runAutoOutreach(
     };
   }
 
-  const TARGET_CATEGORIES = ["distributor", "brewery", "beverage", "insurance", "attorney"];
+  const TARGET_CATEGORIES = [
+    "distributor",
+    "brewery",
+    "equipment",
+    "beverage",
+    "insurance",
+    "attorney",
+  ];
   const candidateLimit = Math.min(36, Math.max(16, freshBudget * 4));
   const rotationSalt = `${new Date().toISOString().slice(0, 10)}-${new Date().getUTCHours()}`;
 
@@ -728,9 +737,10 @@ export async function runAutoOutreach(
         sql`CASE ${prospects.category}
           WHEN 'distributor' THEN 1
           WHEN 'brewery' THEN 2
-          WHEN 'beverage' THEN 3
-          WHEN 'insurance' THEN 4
-          ELSE 5
+          WHEN 'equipment' THEN 3
+          WHEN 'beverage' THEN 4
+          WHEN 'insurance' THEN 5
+          ELSE 6
         END`,
         sql`md5(${prospects.id}::text || ${rotationSalt})`
       )
@@ -870,7 +880,9 @@ export async function runAutoOutreach(
         ? `We watch the official ${fullState} alcohol board every morning so commercial brokers can quote liquor liability before landlords ask for a COI.`
         : target.category === "attorney"
           ? `We watch the official ${fullState} alcohol board every morning so hospitality attorneys can track new pending filings and transfers by county.`
-          : `We watch the official ${fullState} alcohol board every morning so beverage reps catch new accounts 60-90 days early before tap handles and opening orders are locked in.`;
+          : target.category === "equipment"
+            ? `We watch the official ${fullState} alcohol board every morning so commercial kitchen, POS, and bar equipment reps can quote build-outs 60-90 days before doors open.`
+            : `We watch the official ${fullState} alcohol board every morning so beverage reps catch new accounts 60-90 days early before tap handles and opening orders are locked in.`;
 
     // Rotate natural human subject lines so Gmail never fingerprints identical bulk subjects!
     const cityLabel = target.city ?? fullState;

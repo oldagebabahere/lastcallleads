@@ -4,6 +4,8 @@ import { useEffect, useState, type FormEvent } from "react";
 import { CheckCircle2, LoaderCircle, Send } from "lucide-react";
 
 const SUBJECT_OPTIONS = [
+  "Instant CSV Data Pack ($399–$599)",
+  "Exclusive Metro Territory Lock ($999/mo)",
   "Annual Prepay (2 Months Free)",
   "Enterprise All-9 Plan ($499/mo)",
   "Sales question",
@@ -24,7 +26,22 @@ export default function ContactForm() {
     if (!raw) return;
     const lower = raw.toLowerCase();
     queueMicrotask(() => {
-      if (lower.includes("annual")) {
+      if (lower.includes("tx-goldmine") || lower.includes("texas-revenue")) {
+        setSubject("Instant CSV Data Pack ($399–$599)");
+        setDraftBody(
+          "Hi Last Call Leads Research Desk — please send the payment link + sample preview for the Texas Top 2,500 Highest-Revenue Bars & Nightclubs CSV Pack ($399 one-time).\nWork email for CSV delivery: "
+        );
+      } else if (lower.includes("master-pack") || lower.includes("599") || lower.includes("dataset")) {
+        setSubject("Instant CSV Data Pack ($399–$599)");
+        setDraftBody(
+          "Hi Last Call Leads Research Desk — we'd like to purchase the 9-State Pre-Opening + Active Hospitality Master Dataset ($599 one-time).\nTarget states / CRM: "
+        );
+      } else if (lower.includes("exclusive") || lower.includes("999")) {
+        setSubject("Exclusive Metro Territory Lock ($999/mo)");
+        setDraftBody(
+          "Hi Last Call Leads Research Desk — we want to check availability for an Exclusive Metro Category Lock ($999/mo).\nOur category (POS / Insurance / Equipment / Beverage): \nTarget metro or state: "
+        );
+      } else if (lower.includes("annual")) {
         setSubject("Annual Prepay (2 Months Free)");
         setDraftBody(
           "Hi Last Call Leads team — I'd like to claim the Annual Prepay offer (2 months free).\nPlan (Territory $1,290/yr or Pro 3-State $2,490/yr): \nTarget state(s): "

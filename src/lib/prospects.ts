@@ -16,6 +16,7 @@ import { harvestDistributors } from "@/lib/distributors";
 export const PROSPECT_CATEGORIES = [
   { id: "distributor", label: "Beverage & food distributors", tag: '["wholesale"~"beverages|alcohol|wine|beer|food"]' },
   { id: "brewery", label: "Craft breweries, wineries & distilleries", tag: '["craft"~"brewery|winery|distillery"]' },
+  { id: "equipment", label: "Commercial bar, kitchen & POS suppliers", tag: '["shop"~"kitchen|appliance|restaurant_supply|electronics"]' },
   { id: "beverage", label: "Independent wine & spirits shops", tag: '["shop"~"wine|alcohol|beverages"]' },
   { id: "insurance", label: "Commercial liquor insurance", tag: '["office"="insurance"]' },
   { id: "attorney", label: "Hospitality & business attorneys", tag: '["office"="lawyer"]' },

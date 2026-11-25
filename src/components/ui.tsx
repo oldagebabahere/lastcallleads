@@ -53,10 +53,10 @@ export function StatePill({ state }: { state: string }) {
 const NAV_LINKS = [
   { href: "/feed", label: "LIVE FEED" },
   { href: "/map", label: "MAP" },
+  { href: "/datasets", label: "DATA PACKS" },
   { href: "/coverage", label: "COVERAGE" },
   { href: "/sample", label: "SAMPLE" },
   { href: "/insights", label: "DATA DESK" },
-  { href: "/guides", label: "GUIDES" },
 ] as const;
 
 const MOBILE_LINKS = [
@@ -309,6 +309,7 @@ export function Footer() {
           </p>
           <ul className="mt-4 space-y-2.5 text-xs text-smoke">
             <li><Link href="/feed" className="transition-colors hover:text-cream">Live Filing Feed</Link></li>
+            <li><Link href="/datasets" className="font-medium text-amber transition-colors hover:text-cream">Instant CSV Data Packs</Link></li>
             <li><Link href="/map" className="transition-colors hover:text-cream">Territory Map &amp; Routes</Link></li>
             <li><Link href="/coverage" className="transition-colors hover:text-cream">Live Coverage &amp; Health</Link></li>
             <li><Link href="/sample" className="transition-colors hover:text-cream">Sample Morning Dossier</Link></li>
