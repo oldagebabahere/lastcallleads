@@ -2,7 +2,7 @@
 // 4 KPI cards, 5 quick actions, side-by-side Customers + Live Activity,
 // and tidy collapsible drawers for deep diagnostics. Zero clutter.
 import Link from "next/link";
-import { desc, inArray, ne, sql } from "drizzle-orm";
+import { and, desc, inArray, ne, notIlike, notLike, sql } from "drizzle-orm";
 import { db, pool } from "@/db";
 import { ensureSchema } from "@/db/bootstrap";
 import {
@@ -140,11 +140,21 @@ export default async function Dashboard({
       db
         .select()
         .from(emailLog)
-        .where(ne(emailLog.toEmail, "imap-watcher@lastcallleads.internal"))
+        .where(
+          and(
+            ne(emailLog.toEmail, "imap-watcher@lastcallleads.internal"),
+            notLike(emailLog.subject, "[AUTO-RECEIPT]%")
+          )
+        )
         .orderBy(desc(emailLog.id))
         .limit(10),
       db.select().from(subscribers).orderBy(desc(subscribers.id)).limit(30),
-      db.select().from(contactMessages).orderBy(desc(contactMessages.id)).limit(10),
+      db
+        .select()
+        .from(contactMessages)
+        .where(notIlike(sql`coalesce(${contactMessages.subject}, '')`, "%Thank you for your email%"))
+        .orderBy(desc(contactMessages.id))
+        .limit(10),
       db.select({ n: sql<number>`count(*)::int` }).from(events),
       db.execute(sql`
         SELECT

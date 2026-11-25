@@ -7,18 +7,22 @@
 //   3) Mirrors the full reply straight to the owner's Telegram Bot AND saves it to
 //      `contact_messages` (Control Room Contact Inbox) with strict Message-ID dedupe.
 import tls from "node:tls";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, ilike, inArray, isNotNull, like, ne, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { ensureSchema } from "@/db/bootstrap";
-import { contactMessages, emailLog, outreachSent, subscribers } from "@/db/schema";
+import { contactMessages, emailLog, licenses, outreachSent, subscribers } from "@/db/schema";
+import { BRAND } from "./brand";
 import { mapLimit } from "./email-finder";
 import {
   getOutreachSmtpAccounts,
   getPrimarySmtpAccount,
+  sendViaSmtpAccount,
   type SmtpAccount,
 } from "./mailer";
 import { sendTelegramOwner } from "./notify";
 import { PUBLIC_CONFIG } from "./public-config";
+import { stateFullName } from "./states";
+import { prefsUrl, scopedToken, unsubscribeUrls } from "./unsubscribe";
 
 const WATCHER_BOOT_MARKER = "imap-watcher@lastcallleads.internal";
 
@@ -318,10 +322,271 @@ function isAutomatedNoiseSender(email: string): boolean {
   return false;
 }
 
+function isAutoResponderMessage(
+  subject: string,
+  body: string,
+  headers: Map<string, string>
+): boolean {
+  const autoSub = (headers.get("auto-submitted") ?? "").toLowerCase().trim();
+  if (autoSub && autoSub !== "no") return true;
+  if (headers.has("x-autoreply") || headers.has("x-autorespond")) return true;
+  const prec = (headers.get("precedence") ?? "").toLowerCase();
+  if (prec === "auto_reply" || prec === "bulk" || prec === "junk") return true;
+
+  if (
+    /\b(thank you for your email|automatic reply|auto-?reply|out of (the )?office|ooo:|vacation reply|undeliverable|delivery status notification|mail delivery Subsystem)\b/i.test(
+      subject
+    )
+  ) {
+    return true;
+  }
+
+  const head = body.slice(0, 360);
+  if (
+    /\b(we have received your (email|message)|thank you for (contacting|reaching out|your email)|currently out of (the )?office|away from my desk|this is an automated (response|reply|message)|will respond as quickly as we possibly can)\b/i.test(
+      head
+    )
+  ) {
+    return true;
+  }
+  return false;
+}
+
+type ReplyClassification = {
+  intent: "SEND_LEADS" | "AUTO_REPLY" | "OPT_OUT" | "CUSTOM_HUMAN";
+  city: string | null;
+};
+
+async function classifyProspectReply(
+  subject: string,
+  cleanReply: string
+): Promise<ReplyClassification> {
+  const apiKey = process.env.GROQ_API_KEY?.trim();
+  if (apiKey) {
+    try {
+      const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "llama-3.1-8b-instant",
+          temperature: 0,
+          max_tokens: 100,
+          response_format: { type: "json_object" },
+          messages: [
+            {
+              role: "system",
+              content:
+                'Classify a B2B prospect reply to our cold email offering 3 newly filed state liquor applications (street addresses + LLCs). Return strict JSON: {"intent": "SEND_LEADS" | "AUTO_REPLY" | "OPT_OUT" | "CUSTOM_HUMAN", "city": string | null}. Use "SEND_LEADS" if they say yes, sure, send them, interested, ask for addresses/LLCs/sample/info/pricing, or name a city/county they cover (put city in "city", else null). Use "AUTO_REPLY" for automated receipts ("we received your email"), OOO, or directory menus. Use "OPT_OUT" for no thanks, not interested, unsubscribe, remove, wrong person. Use "CUSTOM_HUMAN" for press, complex custom questions, or anything ambiguous.',
+            },
+            {
+              role: "user",
+              content: `Subject: ${subject}\nReply:\n${cleanReply.slice(0, 900)}`,
+            },
+          ],
+        }),
+        signal: AbortSignal.timeout(4_000),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as {
+          choices?: { message?: { content?: string } }[];
+        };
+        const parsed = JSON.parse(data.choices?.[0]?.message?.content ?? "{}") as {
+          intent?: string;
+          city?: string | null;
+        };
+        if (
+          parsed.intent === "SEND_LEADS" ||
+          parsed.intent === "AUTO_REPLY" ||
+          parsed.intent === "OPT_OUT" ||
+          parsed.intent === "CUSTOM_HUMAN"
+        ) {
+          return {
+            intent: parsed.intent,
+            city:
+              typeof parsed.city === "string" && parsed.city.trim().length >= 2
+                ? parsed.city.trim()
+                : null,
+          };
+        }
+      }
+    } catch {
+      // fall through to deterministic keyword classifier
+    }
+  }
+
+  if (
+    cleanReply.length < 550 &&
+    /\b(yes|yeah|yep|sure|please|send|share|interested|love to|sounds good|go ahead|addresses|llc|details|sample|info)\b/i.test(
+      cleanReply
+    ) &&
+    !/\b(no thanks|not interested|unsubscribe|remove me|stop emailing|received your email)\b/i.test(
+      cleanReply
+    )
+  ) {
+    return { intent: "SEND_LEADS", city: null };
+  }
+  return { intent: "CUSTOM_HUMAN", city: null };
+}
+
+async function fetchThreeDetailedBars(
+  state: string,
+  barsJson: string | null,
+  requestedCity: string | null
+): Promise<
+  {
+    tradeName: string;
+    ownerName: string;
+    address: string;
+    city: string;
+    zip: string;
+    typeName: string;
+  }[]
+> {
+  const picked: {
+    tradeName: string;
+    ownerName: string;
+    address: string;
+    city: string;
+    zip: string;
+    typeName: string;
+  }[] = [];
+  const seen = new Set<string>();
+
+  const pushRows = (
+    rows: {
+      tradeName: string | null;
+      ownerName: string | null;
+      address: string | null;
+      city: string | null;
+      zip: string | null;
+      typeName: string | null;
+    }[]
+  ) => {
+    for (const r of rows) {
+      if (picked.length >= 3) break;
+      const name = (r.tradeName ?? r.ownerName ?? "").trim();
+      const addr = (r.address ?? "").trim();
+      if (!name || !addr) continue;
+      const key = `${name.toLowerCase()}|${addr.toLowerCase()}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      picked.push({
+        tradeName: name,
+        ownerName: (r.ownerName ?? name).trim(),
+        address: addr,
+        city: (r.city ?? stateFullName(state)).trim(),
+        zip: (r.zip ?? "").trim(),
+        typeName: (r.typeName ?? "Liquor License Application").trim(),
+      });
+    }
+  };
+
+  // 1) If prospect asked for a specific city, pull fresh bars in that exact city first!
+  if (requestedCity) {
+    const cityRows = await db
+      .select({
+        tradeName: licenses.tradeName,
+        ownerName: licenses.ownerName,
+        address: licenses.address,
+        city: licenses.city,
+        zip: licenses.zip,
+        typeName: licenses.typeName,
+      })
+      .from(licenses)
+      .where(
+        and(
+          eq(licenses.state, state),
+          ilike(licenses.city, `%${requestedCity}%`),
+          isNotNull(licenses.address),
+          ne(licenses.address, "")
+        )
+      )
+      .orderBy(
+        sql`CASE WHEN ${licenses.kind} = 'pending' THEN 0 ELSE 1 END`,
+        desc(licenses.filedAt),
+        desc(licenses.id)
+      )
+      .limit(5)
+      .catch(() => []);
+    pushRows(cityRows);
+  }
+
+  // 2) Match the exact 3 bar names we originally pitched them in Touch #1 (`barsJson`)!
+  if (picked.length < 3 && barsJson) {
+    try {
+      const names = (JSON.parse(barsJson) as string[])
+        .map((n) => n.trim().toLowerCase())
+        .filter(Boolean);
+      if (names.length > 0) {
+        const exactRows = await db
+          .select({
+            tradeName: licenses.tradeName,
+            ownerName: licenses.ownerName,
+            address: licenses.address,
+            city: licenses.city,
+            zip: licenses.zip,
+            typeName: licenses.typeName,
+          })
+          .from(licenses)
+          .where(
+            and(
+              eq(licenses.state, state),
+              inArray(sql`lower(${licenses.tradeName})`, names),
+              isNotNull(licenses.address),
+              ne(licenses.address, "")
+            )
+          )
+          .limit(6)
+          .catch(() => []);
+        pushRows(exactRows);
+      }
+    } catch {
+      // ignore malformed json
+    }
+  }
+
+  // 3) Top up to 3 verified local filings with complete street addresses & LLCs
+  if (picked.length < 3) {
+    const fallbackRows = await db
+      .select({
+        tradeName: licenses.tradeName,
+        ownerName: licenses.ownerName,
+        address: licenses.address,
+        city: licenses.city,
+        zip: licenses.zip,
+        typeName: licenses.typeName,
+      })
+      .from(licenses)
+      .where(
+        and(
+          eq(licenses.state, state),
+          isNotNull(licenses.tradeName),
+          ne(licenses.tradeName, ""),
+          isNotNull(licenses.address),
+          ne(licenses.address, "")
+        )
+      )
+      .orderBy(
+        sql`CASE WHEN ${licenses.kind} = 'pending' THEN 0 ELSE 1 END`,
+        desc(licenses.filedAt),
+        desc(licenses.id)
+      )
+      .limit(8)
+      .catch(() => []);
+    pushRows(fallbackRows);
+  }
+
+  return picked;
+}
+
 export type InboxSyncReport = {
   ok: boolean;
   mailboxesChecked: number;
   forwarded: number;
+  autoClosed: number;
   optedOut: number;
   armedNow?: boolean;
 };
@@ -336,7 +601,7 @@ export async function syncInboundRepliesToTelegram(): Promise<InboxSyncReport> {
   }
   const gmailAccounts = pool.filter((a) => a.host.includes("gmail"));
   if (gmailAccounts.length === 0) {
-    return { ok: true, mailboxesChecked: 0, forwarded: 0, optedOut: 0 };
+    return { ok: true, mailboxesChecked: 0, forwarded: 0, autoClosed: 0, optedOut: 0 };
   }
 
   // 1) Check or arm the first-boot watermark so historical Gmail messages never flood Telegram!
@@ -380,7 +645,12 @@ export async function syncInboundRepliesToTelegram(): Promise<InboxSyncReport> {
       .limit(400)
       .catch(() => []),
     db
-      .select({ email: outreachSent.email, company: outreachSent.company, state: outreachSent.state })
+      .select({
+        email: outreachSent.email,
+        company: outreachSent.company,
+        state: outreachSent.state,
+        barsJson: outreachSent.barsJson,
+      })
       .from(outreachSent)
       .orderBy(desc(outreachSent.id))
       .limit(1500)
@@ -403,14 +673,21 @@ export async function syncInboundRepliesToTelegram(): Promise<InboxSyncReport> {
     PUBLIC_CONFIG.contactEmail.toLowerCase(),
   ]);
 
-  const prospectByEmail = new Map<string, { company: string; state: string }>();
-  const prospectByDomain = new Map<string, { company: string; state: string }>();
+  const prospectByEmail = new Map<
+    string,
+    { company: string; state: string; barsJson: string | null }
+  >();
+  const prospectByDomain = new Map<
+    string,
+    { company: string; state: string; barsJson: string | null }
+  >();
   for (const r of sentRows) {
     const em = r.email.toLowerCase();
-    prospectByEmail.set(em, { company: r.company, state: r.state });
+    const info = { company: r.company, state: r.state, barsJson: r.barsJson };
+    prospectByEmail.set(em, info);
     const dom = em.split("@")[1];
     if (dom && !/^(gmail|yahoo|hotmail|outlook|icloud|aol)\./i.test(dom)) {
-      prospectByDomain.set(dom, { company: r.company, state: r.state });
+      prospectByDomain.set(dom, info);
     }
   }
   const subByEmail = new Map(subRows.map((s) => [s.email.toLowerCase(), s]));
@@ -418,6 +695,7 @@ export async function syncInboundRepliesToTelegram(): Promise<InboxSyncReport> {
 
   const sinceDateStr = formatImapDate(new Date(Date.now() - 36 * 3_600_000));
   let forwarded = 0;
+  let autoClosed = 0;
   let optedOut = 0;
 
   await mapLimit(gmailAccounts, 3, async (account) => {
@@ -503,12 +781,49 @@ export async function syncInboundRepliesToTelegram(): Promise<InboxSyncReport> {
           const fullPlain = extractMimePlainText(rawMsg);
           const cleanReply = stripQuotedReplyHistory(fullPlain).slice(0, 1800);
 
-          // Automatically stop scheduled automated follow-ups whenever a prospect replies!
-          const isOptOut =
+          // 1) Quietly absorb automated OOO / "We have received your email" receipts
+          //    (like PM Spirits auto-responder) so they never clutter Telegram/Contact Inbox
+          //    and never trigger auto-reply loops!
+          if (isAutoResponderMessage(subject, cleanReply, headers)) {
+            await db
+              .insert(emailLog)
+              .values({
+                toEmail: fromEmail,
+                subject: `[AUTO-RECEIPT] ${subject}`.slice(0, 200),
+                status: "received",
+                detail: msgKey.slice(0, 240),
+                eventCount: 0,
+              })
+              .catch(() => undefined);
+            continue;
+          }
+
+          // 2) Classify prospect intent (Opt-Out vs Send 3 Leads vs Custom Question)
+          let isOptOut =
             cleanReply.length < 260 &&
             /\b(unsubscribe|remove me|stop emailing|no thanks|not interested|take me off)\b/i.test(
               cleanReply
             );
+          let classification: ReplyClassification = { intent: "CUSTOM_HUMAN", city: null };
+          if (matchedProspect && !isOptOut) {
+            classification = await classifyProspectReply(subject, cleanReply);
+            if (classification.intent === "AUTO_REPLY") {
+              await db
+                .insert(emailLog)
+                .values({
+                  toEmail: fromEmail,
+                  subject: `[AUTO-RECEIPT] ${subject}`.slice(0, 200),
+                  status: "received",
+                  detail: msgKey.slice(0, 240),
+                  eventCount: 0,
+                })
+                .catch(() => undefined);
+              continue;
+            }
+            if (classification.intent === "OPT_OUT") {
+              isOptOut = true;
+            }
+          }
 
           if (matchedProspect) {
             await db
@@ -547,6 +862,117 @@ export async function syncInboundRepliesToTelegram(): Promise<InboxSyncReport> {
             continue;
           }
 
+          // 3) 100% HANDS-FREE AUTO-CLOSER: If an outreach prospect replies "Yes / Send them / Interested",
+          //    automatically reply in-thread with the 3 full street addresses + LLCs AND unlock their
+          //    7-day free trial (strictly AT-MOST-ONCE per prospect email forever)!
+          let autoClosedNote = "";
+          if (matchedProspect && classification.intent === "SEND_LEADS") {
+            const priorAuto = await db
+              .select({ id: emailLog.id })
+              .from(emailLog)
+              .where(
+                and(
+                  eq(emailLog.toEmail, fromEmail),
+                  like(emailLog.subject, "[AUTO-CLOSER]%")
+                )
+              )
+              .limit(1)
+              .catch(() => []);
+
+            if (priorAuto.length === 0) {
+              const stCode = matchedProspect.state;
+              const stName = stateFullName(stCode);
+              const bars = await fetchThreeDetailedBars(
+                stCode,
+                matchedProspect.barsJson,
+                classification.city
+              );
+
+              if (bars.length > 0) {
+                // Auto-activate complimentary 7-day territory trial if not already subscribed!
+                if (!matchedSub) {
+                  await db
+                    .insert(subscribers)
+                    .values({
+                      email: fromEmail,
+                      name: (fromName || matchedProspect.company).slice(0, 100),
+                      plan: "solo",
+                      status: "trial",
+                      states: stCode,
+                      cityFilter: classification.city ?? null,
+                      prefsToken: scopedToken(fromEmail, "prefs"),
+                      trialEndsAt: new Date(Date.now() + 7 * 86_400_000),
+                      trialNotified: false,
+                    })
+                    .onConflictDoNothing()
+                    .catch(() => undefined);
+                }
+
+                const replySubj = subject.toLowerCase().startsWith("re:")
+                  ? subject
+                  : `Re: ${subject}`;
+                const greetName = fromName
+                  ? fromName.split(/\s+/)[0]
+                  : `${matchedProspect.company} team`;
+                const formattedBars = bars
+                  .map(
+                    (b, idx) =>
+                      `${idx + 1}. ${b.tradeName} — ${b.typeName}\n   Address: ${b.address}, ${b.city}, ${stCode}${b.zip ? ` ${b.zip}` : ""}\n   Applicant LLC: ${b.ownerName}`
+                  )
+                  .join("\n\n");
+                const pLink = prefsUrl(fromEmail);
+                const uLink = unsubscribeUrls(fromEmail).page;
+                const footerLine = `${PUBLIC_CONFIG.legalName}${PUBLIC_CONFIG.postalAddress ? ` | ${PUBLIC_CONFIG.postalAddress}` : ""}`;
+
+                const replyBody = [
+                  `Hi ${greetName},`,
+                  ``,
+                  `Appreciate the reply! Here are the street addresses, legal LLCs, and permit details from the official ${stName} alcohol board${classification.city ? ` (${classification.city} area)` : ""}:`,
+                  ``,
+                  formattedBars,
+                  ``,
+                  `We sweep the official ${stName} licensing portal every morning at 7 AM so you catch new bars, restaurants, and package stores 60-90 days before doors open.`,
+                  ``,
+                  `I also turned on a complimentary 7-day morning feed for ${stName} on ${fromEmail} (no card needed) so tomorrow's new filings hit your inbox automatically:`,
+                  `- Filter your exact cities or ZIP codes: ${pLink}`,
+                  `- Plans & full sample dossier: https://lastcallleads.com/sample`,
+                  ``,
+                  `Best,`,
+                  `Research Desk`,
+                  `${BRAND.name}`,
+                  `--`,
+                  `Pause or opt out in 1 click anytime: ${uLink} | ${footerLine}`,
+                ].join("\n");
+
+                const sendRes = await sendViaSmtpAccount(account, {
+                  from: `"${BRAND.name} Desk" <${account.user}>`,
+                  to: fromEmail,
+                  replyTo: account.user,
+                  subject: replySubj,
+                  text: replyBody,
+                  headers: rawMsgId
+                    ? { "In-Reply-To": rawMsgId, References: rawMsgId }
+                    : undefined,
+                });
+
+                if (sendRes.status === "sent") {
+                  autoClosed++;
+                  autoClosedNote = `\n\n🤖✅ AUTO-REPLIED IN THREAD: Sent ${bars.length} full street addresses + LLCs & activated 7-day ${stName} Free Trial automatically! (Zero action needed from you)`;
+                  await db
+                    .insert(emailLog)
+                    .values({
+                      toEmail: fromEmail,
+                      subject: `[AUTO-CLOSER] ${replySubj}`.slice(0, 200),
+                      status: "sent",
+                      detail: sendRes.detail,
+                      eventCount: bars.length,
+                    })
+                    .catch(() => undefined);
+                }
+              }
+            }
+          }
+
           // Also save into Control Room Contact Inbox so owner has a permanent dashboard record + 1-click Reply
           await db
             .insert(contactMessages)
@@ -559,17 +985,19 @@ export async function syncInboundRepliesToTelegram(): Promise<InboxSyncReport> {
                   ? `Subscriber (${matchedSub.plan})`
                   : null,
               subject: `[${account.user}] ${subject}`.slice(0, 150),
-              message: (cleanReply || "(empty message)").slice(0, 5000),
+              message: `${cleanReply || "(empty message)"}${autoClosedNote}`.slice(0, 5000),
             })
             .catch(() => undefined);
 
-          const badge = matchedProspect
-            ? `🔥 HOT OUTREACH REPLY! (${matchedProspect.company} · ${matchedProspect.state})`
-            : matchedSub
-              ? `💎 SUBSCRIBER MESSAGE (${matchedSub.plan.toUpperCase()})`
-              : matchedContact
-                ? `💬 THREAD REPLY`
-                : `📩 NEW INBOUND EMAIL`;
+          const badge = autoClosedNote
+            ? `🤖🔥 HOT LEAD AUTO-CLOSED! (${matchedProspect?.company} · ${matchedProspect?.state})`
+            : matchedProspect
+              ? `🔥 HOT OUTREACH REPLY! (${matchedProspect.company} · ${matchedProspect.state})`
+              : matchedSub
+                ? `💎 SUBSCRIBER MESSAGE (${matchedSub.plan.toUpperCase()})`
+                : matchedContact
+                  ? `💬 THREAD REPLY`
+                  : `📩 NEW INBOUND EMAIL`;
 
           await sendTelegramOwner(
             [
@@ -580,7 +1008,9 @@ export async function syncInboundRepliesToTelegram(): Promise<InboxSyncReport> {
               `────────────────────`,
               cleanReply || "(no text body)",
               `────────────────────`,
-              `💡 Reply from Gmail (${account.user}) to continue this conversation!`,
+              autoClosedNote
+                ? autoClosedNote.trim()
+                : `💡 Reply from Gmail (${account.user}) if needed!`,
             ].join("\n")
           ).catch(() => undefined);
 
@@ -603,6 +1033,7 @@ export async function syncInboundRepliesToTelegram(): Promise<InboxSyncReport> {
     ok: true,
     mailboxesChecked: gmailAccounts.length,
     forwarded,
+    autoClosed,
     optedOut,
     ...(armedNow ? { armedNow: true } : {}),
   };
