@@ -22,6 +22,7 @@ export type MailPayload = {
 export type MailResult = {
   status: "sent" | "dry_run" | "error";
   detail: string;
+  messageId?: string;
 };
 
 export type SmtpAccount = {
@@ -180,6 +181,7 @@ export async function sendViaSmtpAccount(
     return {
       status: "sent",
       detail: `smtp:${account.user}:${info.messageId ?? "ok"}`,
+      messageId: info.messageId,
     };
   } catch (err) {
     return {

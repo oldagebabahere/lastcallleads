@@ -17,8 +17,10 @@ import { harvestDistributors } from "./distributors";
 import { harvestProspects, isJunkProspect } from "./prospects";
 import { runByState } from "./ingest-aggregator";
 import { sendTelegramOwner } from "./notify";
+import { rescueAndEngageImapPeer } from "./imap-warmup";
 import {
   getOutreachSmtpAccounts,
+  getPrimarySmtpAccount,
   isOutreachTransportConfigured,
   sendTransactionalMail,
   sendViaSmtpAccount,
@@ -26,6 +28,15 @@ import {
 } from "./mailer";
 import { LIVE_STATE_CODES, stateFullName } from "./states";
 import { siteUrl } from "./site";
+
+export type WarmupRingReport = {
+  ran: boolean;
+  pairsWarmed: number;
+  messagesSent: number;
+  rescuedFromSpam: number;
+  engagedInbox: number;
+  reason?: string;
+};
 
 export type AutoOutreachReport = {
   ok: boolean;
@@ -37,6 +48,7 @@ export type AutoOutreachReport = {
   dryRun: number;
   skipped: number;
   accountsAvailable: number;
+  warmup?: WarmupRingReport;
   reason?: string;
 };
 
@@ -77,7 +89,7 @@ async function craftGroqOpener(opts: {
           {
             role: "system",
             content:
-              "Write ONE short, casual, plain-English opening sentence (max 28 words, no emojis, no hype, no exclamation spam) for a B2B founder emailing a US hospitality supplier about newly filed state liquor applications.",
+              "Write ONE short, casual, plain-English opening sentence (max 28 words, no greeting, no personal name, no emojis, no hype, no exclamation spam) for a hospitality research desk emailing a US beverage supplier about newly filed state liquor applications.",
           },
           {
             role: "user",
@@ -103,8 +115,175 @@ function defaultFromLabel(): string {
   return (
     process.env.OUTREACH_FROM_EMAIL?.trim() ||
     process.env.ALERT_FROM_EMAIL?.trim() ||
-    `${PUBLIC_CONFIG.founderName || BRAND.name} <${PUBLIC_CONFIG.contactEmail}>`
+    `${PUBLIC_CONFIG.founderName || `${BRAND.name} Desk`} <${PUBLIC_CONFIG.contactEmail}>`
   );
+}
+
+const WARMUP_LOG_MARKER = "warmup-ring@lastcallleads.internal";
+
+const WARMUP_TOPICS: { subject: string; body: string; reply: string }[] = [
+  {
+    subject: "Texas TABC mixed beverage county review",
+    body: "Morning team — finished cross-checking this week's pending mixed beverage applications across Travis, Harris, and Bexar counties. All permit IDs matched the state board feed cleanly.",
+    reply: "Got it, thanks for confirming the county counts. Looks good on our end — let's keep watching the Dallas filings for Friday's batch.",
+  },
+  {
+    subject: "New York SLA & Connecticut DCP filing notes",
+    body: "Quick note on the Northeast queue — Connecticut Cafe Liquor and New York on-premises filings came in on schedule this morning with clean street addresses.",
+    reply: "Appreciate the heads-up. Verified the Hartford and New Haven entries on the sheet, everything lines up.",
+  },
+  {
+    subject: "Colorado LED & Illinois hospitality check-in",
+    body: "Just wrapped up the morning territory pass for Denver and Chicago retail liquor applications. Zero duplicate license keys in today's pull.",
+    reply: "Thanks! Double-checked the Denver rows as well and marked them reviewed for this week.",
+  },
+  {
+    subject: "Pacific Northwest winery & taproom schedule",
+    body: "Sharing a quick update on Washington WSLCB and Oregon OLCC pending venue records — new taproom filings in King and Multnomah counties are updated.",
+    reply: "Perfect, thanks for sending this over. Everything looks accurate for the morning digest.",
+  },
+  {
+    subject: "California ABC county batch verification",
+    body: "Checked the latest California ABC type-47 and type-48 restaurant applications across Los Angeles and San Diego counties. Ready for the morning summary.",
+    reply: "Received and reviewed — appreciate you keeping the county breakdown tidy.",
+  },
+  {
+    subject: "Missouri alcohol control weekly sync",
+    body: "Finished reviewing the St. Louis and Kansas City pending retail filings from the state division export. All entity names parsed cleanly.",
+    reply: "Awesome, thanks for the quick confirmation. Nothing else needed on Missouri today.",
+  },
+];
+
+// 100% Automatic Peer-to-Peer Gmail Warm-Up Engine ($0 replacement for $97/mo Lemwarm/Instantly):
+//   - Connects all configured outreach + primary Gmail accounts into a trusted conversation ring
+//   - Sends realistic plain-text B2B threads + real `In-Reply-To` replies
+//   - Connects via IMAP (`imap.gmail.com:993`) to rescue any peer mail from Spam -> INBOX
+//     ("Report not spam") and marks messages Read + Starred (`\Seen \Flagged`)!
+//   - Runs automatically up to 2x/day (spaced >= 4h apart) with zero manual clicks.
+export async function runMailboxWarmup(opts: { force?: boolean } = {}): Promise<WarmupRingReport> {
+  const pool = [...getOutreachSmtpAccounts()];
+  const primary = getPrimarySmtpAccount();
+  if (primary && !pool.some((a) => a.id === primary.id)) {
+    pool.push(primary);
+  }
+  if (pool.length < 2) {
+    return {
+      ran: false,
+      pairsWarmed: 0,
+      messagesSent: 0,
+      rescuedFromSpam: 0,
+      engagedInbox: 0,
+      reason: "need at least 2 SMTP mailboxes for peer warm-up",
+    };
+  }
+
+  if (!opts.force) {
+    const dayStart = new Date();
+    dayStart.setUTCHours(0, 0, 0, 0);
+    const recentRuns = await db
+      .select({ createdAt: emailLog.createdAt })
+      .from(emailLog)
+      .where(and(eq(emailLog.toEmail, WARMUP_LOG_MARKER), gt(emailLog.createdAt, dayStart)))
+      .orderBy(desc(emailLog.createdAt))
+      .limit(3)
+      .catch(() => []);
+
+    if (recentRuns.length >= 2) {
+      return {
+        ran: false,
+        pairsWarmed: 0,
+        messagesSent: 0,
+        rescuedFromSpam: 0,
+        engagedInbox: 0,
+        reason: "daily 2x warm-up quota already completed",
+      };
+    }
+    if (recentRuns[0]?.createdAt) {
+      const hoursSince = (Date.now() - new Date(recentRuns[0].createdAt).getTime()) / 3_600_000;
+      if (hoursSince < 4) {
+        return {
+          ran: false,
+          pairsWarmed: 0,
+          messagesSent: 0,
+          rescuedFromSpam: 0,
+          engagedInbox: 0,
+          reason: `cooldown active (${hoursSince.toFixed(1)}h < 4h)`,
+        };
+      }
+    }
+  }
+
+  const daySalt = Math.floor(Date.now() / 14_400_000);
+  const pairs = pool.map((sender, idx) => ({
+    sender,
+    receiver: pool[(idx + 1) % pool.length],
+    topic: WARMUP_TOPICS[(idx + daySalt) % WARMUP_TOPICS.length],
+  }));
+
+  let pairsWarmed = 0;
+  let messagesSent = 0;
+  let rescuedFromSpam = 0;
+  let engagedInbox = 0;
+
+  await mapLimit(pairs, 3, async ({ sender, receiver, topic }) => {
+    const first = await sendViaSmtpAccount(sender, {
+      from: `"${BRAND.name} Desk" <${sender.user}>`,
+      to: receiver.user,
+      replyTo: sender.user,
+      subject: topic.subject,
+      text: `${topic.body}\n\nBest,\nResearch Desk\n${BRAND.name}`,
+    });
+    if (first.status !== "sent") return;
+    messagesSent++;
+
+    // Give Gmail ~1.2s to deliver before rescuing from Spam / Starring in INBOX
+    await new Promise((r) => setTimeout(r, 1_200));
+    const r1 = await rescueAndEngageImapPeer(receiver, [sender.user]);
+    rescuedFromSpam += r1.rescuedFromSpam;
+    engagedInbox += r1.engagedInbox;
+
+    const replyHeaders: Record<string, string> | undefined = first.messageId
+      ? { "In-Reply-To": first.messageId, References: first.messageId }
+      : undefined;
+
+    const second = await sendViaSmtpAccount(receiver, {
+      from: `"${BRAND.name} Desk" <${receiver.user}>`,
+      to: sender.user,
+      replyTo: receiver.user,
+      subject: `Re: ${topic.subject}`,
+      text: `${topic.reply}\n\nThanks,\nResearch Desk`,
+      headers: replyHeaders,
+    });
+    if (second.status === "sent") {
+      messagesSent++;
+      pairsWarmed++;
+      await new Promise((r) => setTimeout(r, 1_000));
+      const r2 = await rescueAndEngageImapPeer(sender, [receiver.user]);
+      rescuedFromSpam += r2.rescuedFromSpam;
+      engagedInbox += r2.engagedInbox;
+    }
+  });
+
+  if (messagesSent > 0) {
+    await db
+      .insert(emailLog)
+      .values({
+        toEmail: WARMUP_LOG_MARKER,
+        subject: `[WARMUP] Auto-warmed ${pool.length} mailboxes (${messagesSent} msgs, ${rescuedFromSpam} unspammed)`,
+        status: "sent",
+        detail: `pairs:${pairsWarmed}/${pool.length} starred:${engagedInbox} rescued:${rescuedFromSpam}`,
+        eventCount: messagesSent,
+      })
+      .catch(() => undefined);
+  }
+
+  return {
+    ran: messagesSent > 0,
+    pairsWarmed,
+    messagesSent,
+    rescuedFromSpam,
+    engagedInbox,
+  };
 }
 
 async function getAccountWarmupStats(): Promise<{
@@ -282,6 +461,8 @@ export async function runAutoOutreach(
     state?: string;
     limit?: number;
     dryRun?: boolean;
+    skipWarmup?: boolean;
+    forceWarmup?: boolean;
   } = {}
 ): Promise<AutoOutreachReport> {
   await ensureSchema();
@@ -306,6 +487,12 @@ export async function runAutoOutreach(
   const smtpPool = getOutreachSmtpAccounts();
   const hasTransport = isOutreachTransportConfigured();
   const forceDry = opts.dryRun === true || !hasTransport;
+
+  // Automatically warm up all Gmail mailboxes (Not-Spam rescue + Star + Reply ring) up to 2x/day!
+  const warmup =
+    !forceDry && !opts.skipWarmup
+      ? await runMailboxWarmup({ force: opts.forceWarmup }).catch(() => undefined)
+      : undefined;
   const warmupStats = await getAccountWarmupStats().catch(() => ({
     todayCount: new Map<string, number>(),
     ageDays: new Map<string, number>(),
@@ -387,7 +574,7 @@ export async function runAutoOutreach(
         row.lastSubject || `New ${rowStateName} liquor filings`;
       const subject = origSubj.toLowerCase().startsWith("re:") ? origSubj : `Re: ${origSubj}`;
       const isFinalTouch = nextTouch >= 2;
-      const founder = PUBLIC_CONFIG.founderName || BRAND.name;
+      const founder = PUBLIC_CONFIG.founderName || "Research Desk";
       const footerLine = `${PUBLIC_CONFIG.legalName}${PUBLIC_CONFIG.postalAddress ? ` | ${PUBLIC_CONFIG.postalAddress}` : ""}`;
       // Pure plain-text follow-ups (zero HTML bloat -> 95%+ Primary Inbox placement!)
       const text = isFinalTouch
@@ -655,7 +842,7 @@ export async function runAutoOutreach(
     )
     .join("\n");
   const domainPlain = base.replace(/^https?:\/\//, "");
-  const founder = PUBLIC_CONFIG.founderName || BRAND.name;
+  const founder = PUBLIC_CONFIG.founderName || "Research Desk";
   const footerLine = `${PUBLIC_CONFIG.legalName}${PUBLIC_CONFIG.postalAddress ? ` | ${PUBLIC_CONFIG.postalAddress}` : ""}`;
 
   for (let qi = 0; qi < queue.length; qi++) {
@@ -794,5 +981,6 @@ export async function runAutoOutreach(
     dryRun,
     skipped: candidates.length - queue.length,
     accountsAvailable: smtpPool.length || (process.env.RESEND_API_KEY ? 1 : 0),
+    ...(warmup ? { warmup } : {}),
   };
 }

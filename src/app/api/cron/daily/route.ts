@@ -105,7 +105,10 @@ export async function GET(req: Request) {
   // 6) Autonomous zero-mazdoori B2B outreach (auto-on once OUTREACH_SMTP_ACCOUNTS or AUTO_OUTREACH_ENABLED=true is set).
   let autoOutreach: Awaited<ReturnType<typeof runAutoOutreach>> | null = null;
   if (isAutoOutreachActive() && Date.now() - started < 48_000) {
-    autoOutreach = await runAutoOutreach({ limit: 8 }).catch((e) => ({
+    autoOutreach = await runAutoOutreach({
+      limit: 8,
+      skipWarmup: Date.now() - started > 36_000,
+    }).catch((e) => ({
       ok: false,
       state: "ERR",
       stateName: "Error",
