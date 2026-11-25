@@ -13,7 +13,8 @@ export type MailPayload = {
   to: string;
   replyTo?: string;
   subject: string;
-  html: string;
+  html?: string;
+  text?: string;
   headers?: Record<string, string>;
   attachments?: { filename: string; content: string; encoding?: "base64" | "utf8" }[];
 };
@@ -166,7 +167,8 @@ export async function sendViaSmtpAccount(
       to: payload.to,
       replyTo: payload.replyTo || account.user,
       subject: payload.subject,
-      html: payload.html,
+      ...(payload.text ? { text: payload.text } : {}),
+      ...(payload.html ? { html: payload.html } : {}),
       headers: payload.headers,
       attachments: payload.attachments?.map((a) => ({
         filename: a.filename,
@@ -201,7 +203,8 @@ export async function sendTransactionalMail(payload: MailPayload): Promise<MailR
         to: payload.to,
         replyTo: payload.replyTo,
         subject: payload.subject,
-        html: payload.html,
+        ...(payload.html ? { html: payload.html } : { text: payload.text ?? "" }),
+        ...(payload.text && payload.html ? { text: payload.text } : {}),
         ...(payload.headers ? { headers: payload.headers } : {}),
         ...(payload.attachments?.length
           ? {
