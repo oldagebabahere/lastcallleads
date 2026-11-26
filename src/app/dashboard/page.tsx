@@ -143,7 +143,9 @@ export default async function Dashboard({
         .where(
           and(
             ne(emailLog.toEmail, "imap-watcher@lastcallleads.internal"),
-            notLike(emailLog.subject, "[AUTO-RECEIPT]%")
+            ne(emailLog.toEmail, "warmup-ring@lastcallleads.internal"),
+            notLike(emailLog.subject, "[AUTO-RECEIPT]%"),
+            notLike(emailLog.subject, "[WARMUP]%")
           )
         )
         .orderBy(desc(emailLog.id))
@@ -286,7 +288,7 @@ export default async function Dashboard({
   const envDetails = [
     { ok: Boolean(process.env.DATABASE_URL), title: "Supabase Postgres", hint: "DATABASE_URL" },
     { ok: mailReady, title: "Transactional Mail", hint: "Resend + Gmail failover" },
-    { ok: outreachActive, title: `Outreach Pool (${outreachAccounts})`, hint: "14-day Gmail warm-up" },
+    { ok: outreachActive, title: `Outreach Pool (${outreachAccounts})`, hint: "14-day progressive send ramp" },
     { ok: groqReady, title: "Groq AI Openers", hint: "Personalized B2B intros" },
     { ok: telegramReady, title: "Telegram Alerts", hint: "Daily reports + sales pings" },
     { ok: dodoReady, title: "Dodo Payments", hint: "Live Checkout + Webhook" },

@@ -107,7 +107,6 @@ export async function GET(req: Request) {
   if (isAutoOutreachActive() && Date.now() - started < 48_000) {
     autoOutreach = await runAutoOutreach({
       limit: 8,
-      skipWarmup: Date.now() - started > 36_000,
     }).catch((e) => ({
       ok: false,
       state: "ERR",
