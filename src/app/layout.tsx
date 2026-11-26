@@ -12,7 +12,7 @@ const GOOGLE_FONTS_HREF =
 
 export const metadata: Metadata = {
   metadataBase: new URL(
-    process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"
+    process.env.NEXT_PUBLIC_SITE_URL ?? "https://lastcallleads.com"
   ),
   title: {
     default: `${BRAND.name} — new bar & restaurant liquor filings, before they open`,
@@ -29,8 +29,22 @@ export const metadata: Metadata = {
     "bar opening leads",
     "distributor sales leads",
   ],
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      "max-image-preview": "large",
+      "max-snippet": -1,
+      "max-video-preview": -1,
+    },
+  },
   alternates: {
-    canonical: "/",
+    types: {
+      "application/rss+xml": "https://lastcallleads.com/rss.xml",
+      "text/plain": "https://lastcallleads.com/llms.txt",
+    },
   },
   openGraph: {
     title: `${BRAND.name} — new liquor filings, before the doors open`,

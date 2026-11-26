@@ -9,6 +9,24 @@ const nextConfig: NextConfig = {
     return [
       {
         source: "/",
+        has: [{ type: "host", value: "www\\.lastcallleads\\.com" }],
+        destination: "https://lastcallleads.com/",
+        permanent: true,
+      },
+      {
+        source: "/:first((?!api$)[a-zA-Z0-9_.-]+)",
+        has: [{ type: "host", value: "www\\.lastcallleads\\.com" }],
+        destination: "https://lastcallleads.com/:first",
+        permanent: true,
+      },
+      {
+        source: "/:first((?!api$)[a-zA-Z0-9_.-]+)/:rest*",
+        has: [{ type: "host", value: "www\\.lastcallleads\\.com" }],
+        destination: "https://lastcallleads.com/:first/:rest*",
+        permanent: true,
+      },
+      {
+        source: "/",
         has: [{ type: "host", value: ".*\\.vercel\\.app" }],
         destination: "https://lastcallleads.com/",
         permanent: true,

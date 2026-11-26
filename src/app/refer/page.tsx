@@ -7,6 +7,7 @@ export const metadata: Metadata = {
   title: "Refer a rep, get a month free",
   description:
     "Refer another sales rep to Last Call Leads and your next month is on us. One paying introduction = one free month.",
+  alternates: { canonical: "/refer" },
 };
 
 export default function ReferPage() {

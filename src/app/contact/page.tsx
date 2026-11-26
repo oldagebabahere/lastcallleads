@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: "Contact sales, annual billing, Enterprise API & support",
   description:
     "Contact the Last Call Leads team for Annual Prepay (2 months free), All-9 Enterprise + REST API, team seats, billing help, or data corrections.",
+  alternates: { canonical: "/contact" },
 };
 
 export default function ContactPage() {

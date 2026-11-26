@@ -113,6 +113,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     for (const c of cities) {
       if (!c.city || !liveSet.has(c.state)) continue;
       const slug = citySlug(c.city, c.state);
+      if (!/^[a-z0-9][a-z0-9-]*-[a-z]{2}$/.test(slug)) continue;
       if (seen.has(slug)) continue;
       seen.add(slug);
       entries.push({

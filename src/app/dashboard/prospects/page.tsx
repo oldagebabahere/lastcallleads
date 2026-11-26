@@ -1,6 +1,7 @@
 // PROSPECT FINDER — your own unlimited daily lead machine. Every attorney,
 // insurance agent and beverage seller in America, pulled from
 // OpenStreetMap, exportable as CSV for cold outreach.
+import type { Metadata } from "next";
 import Link from "next/link";
 import { db } from "@/db";
 import { ensureSchema } from "@/db/bootstrap";
@@ -11,6 +12,11 @@ import { LIVE_STATE_CODES, stateFullName } from "@/lib/states";
 import { desc, inArray, sql } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = {
+  title: "Prospect Finder",
+  robots: { index: false, follow: false },
+};
 
 export default async function ProspectsPage({
   searchParams,

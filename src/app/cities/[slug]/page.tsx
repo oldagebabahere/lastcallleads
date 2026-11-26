@@ -2,7 +2,7 @@
 // database. /cities/austin-tx, /cities/brooklyn-ny … created automatically,
 // refreshed by the daily sweep, indexed by Google.
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { permanentRedirect } from "next/navigation";
 import { ArrowRight, MapPin } from "lucide-react";
 import type { Metadata } from "next";
 import { desc, sql } from "drizzle-orm";
@@ -20,25 +20,29 @@ export const dynamic = "force-dynamic";
 const STATE_NAMES: Record<string, string> = ALL_US_STATE_NAMES;
 const STATE_PAGE_CODES = LIVE_STATE_SET;
 
-function parseSlug(slug: string): { city: string; state: string } | null {
-  const m = slug.match(/^(.+)-([a-z]{2})$/i);
+function parseSlug(slug: string): { slugCity: string; city: string; state: string } | null {
+  const m = slug.match(/^([a-z0-9][a-z0-9-]*)-([a-z]{2})$/i);
   if (!m) return null;
   const state = m[2].toUpperCase();
   if (!STATE_NAMES[state]) return null;
-  return { city: m[1].replace(/-/g, " "), state };
+  const slugCity = m[1].toLowerCase().replace(/-+/g, "-").replace(/^-+|-+$/g, "");
+  if (!slugCity) return null;
+  return { slugCity, city: slugCity.replace(/-/g, " "), state };
 }
 
 function titleCase(s: string): string {
   return s.replace(/\w\S*/g, (w) => w[0].toUpperCase() + w.slice(1).toLowerCase());
 }
 
-async function loadCity(city: string, state: string) {
+async function loadCity(slugCity: string, state: string) {
   try {
     await ensureSchema();
     const fromEvents = await db
       .select()
       .from(events)
-      .where(sql`lower(${events.city}) = ${city.toLowerCase()} AND ${events.state} = ${state}`)
+      .where(
+        sql`trim(both '-' from regexp_replace(lower(coalesce(${events.city}, '')), '[^a-z0-9]+', '-', 'g')) = ${slugCity} AND ${events.state} = ${state}`
+      )
       .orderBy(desc(events.occurredAt))
       .limit(60);
 
@@ -47,7 +51,9 @@ async function loadCity(city: string, state: string) {
     const register = await db
       .select()
       .from(licenses)
-      .where(sql`lower(${licenses.city}) = ${city.toLowerCase()} AND ${licenses.state} = ${state}`)
+      .where(
+        sql`trim(both '-' from regexp_replace(lower(coalesce(${licenses.city}, '')), '[^a-z0-9]+', '-', 'g')) = ${slugCity} AND ${licenses.state} = ${state}`
+      )
       .orderBy(desc(licenses.issuedAt))
       .limit(60);
 
@@ -97,11 +103,11 @@ export default async function CityPage({
 }) {
   const { slug } = await params;
   const parsed = parseSlug(slug);
-  if (!parsed) notFound();
+  if (!parsed) permanentRedirect("/cities");
   const city = titleCase(parsed.city);
-  const { state } = parsed;
+  const { state, slugCity } = parsed;
 
-  const loaded = await loadCity(parsed.city, state);
+  const loaded = await loadCity(slugCity, state);
   const rows = loaded.rows;
   const hasData = rows.length > 0;
 
@@ -120,7 +126,7 @@ export default async function CityPage({
       .select({ city: events.city, n: sql<number>`count(*)::int` })
       .from(events)
       .where(
-        sql`${events.state} = ${state} AND lower(${events.city}) <> ${parsed.city.toLowerCase()} AND ${events.city} IS NOT NULL AND ${events.city} <> ''`
+        sql`${events.state} = ${state} AND trim(both '-' from regexp_replace(lower(coalesce(${events.city}, '')), '[^a-z0-9]+', '-', 'g')) <> ${slugCity} AND ${events.city} IS NOT NULL AND ${events.city} <> ''`
       )
       .groupBy(events.city)
       .orderBy(desc(sql`count(*)`))
@@ -131,7 +137,7 @@ export default async function CityPage({
         .select({ city: licenses.city, n: sql<number>`count(*)::int` })
         .from(licenses)
         .where(
-          sql`${licenses.state} = ${state} AND lower(${licenses.city}) <> ${parsed.city.toLowerCase()} AND ${licenses.city} IS NOT NULL AND ${licenses.city} <> ''`
+          sql`${licenses.state} = ${state} AND trim(both '-' from regexp_replace(lower(coalesce(${licenses.city}, '')), '[^a-z0-9]+', '-', 'g')) <> ${slugCity} AND ${licenses.city} IS NOT NULL AND ${licenses.city} <> ''`
         )
         .groupBy(licenses.city)
         .orderBy(desc(sql`count(*)`))

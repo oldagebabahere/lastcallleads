@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowRight, ChevronDown, Flame, MapPin, ShieldCheck, Sparkles } from "lucide-react";
 import { sql } from "drizzle-orm";
@@ -23,6 +24,10 @@ import { BRAND } from "@/lib/brand";
 import { siteUrl } from "@/lib/site";
 
 export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = {
+  alternates: { canonical: "/" },
+};
 
 const FAQ_ITEMS = [
   {
@@ -237,16 +242,13 @@ export default async function Home() {
           <span className="hidden shrink-0 sm:block">FOR DISTRIBUTORS · BREWERIES · SPIRITS REPS</span>
         </div>
 
-        <div
-          className="parallax parallax-soft pointer-events-none relative z-20 mt-4 select-none text-center lg:mt-0"
-          aria-hidden="true"
-        >
-          <p className="hero-giant text-[15vw] sm:text-[11.5vw] lg:text-[8.6rem]">NEW BARS</p>
-          <p className="hero-giant stroke text-[15vw] sm:text-[11.5vw] lg:text-[8.6rem]">BEFORE THEY</p>
-          <p className="hero-giant text-[15vw] sm:text-[11.5vw] lg:text-[8.6rem]">
+        <h1 className="parallax parallax-soft pointer-events-none relative z-20 mt-4 select-none text-center lg:mt-0">
+          <span className="hero-giant block text-[15vw] sm:text-[11.5vw] lg:text-[8.6rem]">NEW BARS</span>
+          <span className="hero-giant stroke block text-[15vw] sm:text-[11.5vw] lg:text-[8.6rem]">BEFORE THEY</span>
+          <span className="hero-giant block text-[15vw] sm:text-[11.5vw] lg:text-[8.6rem]">
             OPEN<span className="text-wine2">.</span>
-          </p>
-        </div>
+          </span>
+        </h1>
 
         <div className="relative z-30 mx-auto mt-10 max-w-2xl text-center lg:mt-20">
           <div

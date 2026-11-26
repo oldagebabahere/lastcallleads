@@ -13,7 +13,7 @@ import { Footer, Nav } from "@/components/ui";
 export const dynamic = "force-dynamic";
 
 export const metadata = {
-  title: `9 Live Markets · ${BRAND.name}`,
+  title: "9 Live US Liquor License Markets — Daily Portal Coverage",
   description: `100% honest live alcohol-license coverage across 9 verified US beverage markets — ${LIVE_STATE_NAMES_LIST}.`,
   alternates: { canonical: "/coverage" },
 };

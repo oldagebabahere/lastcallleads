@@ -5,6 +5,7 @@ import { PUBLIC_CONFIG } from "@/lib/public-config";
 export const metadata: Metadata = {
   title: "Cancellation and refund policy",
   description: "How subscriptions, cancellations, duplicate charges, service issues and refund requests are handled.",
+  alternates: { canonical: "/refunds" },
 };
 
 export default function RefundsPage() {

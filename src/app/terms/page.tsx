@@ -5,6 +5,7 @@ import { PUBLIC_CONFIG } from "@/lib/public-config";
 export const metadata: Metadata = {
   title: "Terms of service",
   description: "Terms governing use of Last Call Leads public data pages and paid filing-alert subscriptions.",
+  alternates: { canonical: "/terms" },
 };
 
 export default function TermsPage() {

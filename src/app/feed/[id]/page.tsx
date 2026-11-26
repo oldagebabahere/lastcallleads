@@ -1,6 +1,6 @@
 import { and, desc, eq, ne, sql } from "drizzle-orm";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { permanentRedirect } from "next/navigation";
 import {
   ArrowLeft,
   Building2,
@@ -84,14 +84,14 @@ export default async function LeadPage({
 }) {
   const { id } = await params;
   const numId = parseId(id);
-  if (!numId) notFound();
+  if (!numId) permanentRedirect("/feed");
 
   const { email, token } = await searchParams;
   await ensureSchema();
 
   const rows = await db.select().from(events).where(eq(events.id, numId)).limit(1);
   const e = rows[0];
-  if (!e) notFound();
+  if (!e) permanentRedirect("/feed");
 
   const cut = embargoCutoff();
   let locked = e.occurredAt ? e.occurredAt.getTime() > cut.getTime() : false;

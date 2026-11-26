@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: "Partner program — earn 40% recurring for every customer you refer",
   description:
     "Refer distributors, reps and vendors to Last Call Leads and earn 40% of every payment, every month, for as long as they stay. Free to join.",
+  alternates: { canonical: "/partner" },
 };
 
 export default function PartnerPage() {

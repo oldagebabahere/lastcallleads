@@ -1,5 +1,6 @@
 // CUSTOMER MANAGER — readable by design (v14.5): 14-16px fonts, bright text,
 // colored status pills. The operator's daily tool must be readable on a phone.
+import type { Metadata } from "next";
 import Link from "next/link";
 import { db } from "@/db";
 import { ensureSchema } from "@/db/bootstrap";
@@ -10,6 +11,11 @@ import { desc } from "drizzle-orm";
 import { AddCustomer, GenKey, RowButtons, TestEmail } from "./client";
 
 export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = {
+  title: "Customer Manager",
+  robots: { index: false, follow: false },
+};
 
 export default async function CustomersPage({
   searchParams,

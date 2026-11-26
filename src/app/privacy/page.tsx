@@ -5,6 +5,7 @@ import { PUBLIC_CONFIG } from "@/lib/public-config";
 export const metadata: Metadata = {
   title: "Privacy policy",
   description: "How Last Call Leads collects, uses, stores and protects customer and website data.",
+  alternates: { canonical: "/privacy" },
 };
 
 export default function PrivacyPage() {

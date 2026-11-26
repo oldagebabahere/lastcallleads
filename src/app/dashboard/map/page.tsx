@@ -1,5 +1,6 @@
 // MAP VIEW — every prospect pin on one map. Filter by state, click a pin for
 // name + phone + website. /dashboard/map?key=...&state=TX
+import type { Metadata } from "next";
 import Link from "next/link";
 import { db } from "@/db";
 import { ensureSchema } from "@/db/bootstrap";
@@ -11,6 +12,11 @@ import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import ProspectMap, { type MapPin } from "@/components/prospect-map";
 
 export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = {
+  title: "Prospect Territory Map",
+  robots: { index: false, follow: false },
+};
 
 export default async function MapPage({
   searchParams,
