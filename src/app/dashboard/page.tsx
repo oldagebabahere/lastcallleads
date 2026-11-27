@@ -144,8 +144,10 @@ export default async function Dashboard({
           and(
             ne(emailLog.toEmail, "imap-watcher@lastcallleads.internal"),
             ne(emailLog.toEmail, "warmup-ring@lastcallleads.internal"),
+            ne(emailLog.toEmail, "telegram@owner"),
             notLike(emailLog.subject, "[AUTO-RECEIPT]%"),
-            notLike(emailLog.subject, "[WARMUP]%")
+            notLike(emailLog.subject, "[WARMUP]%"),
+            notLike(emailLog.subject, "Social post ready%")
           )
         )
         .orderBy(desc(emailLog.id))

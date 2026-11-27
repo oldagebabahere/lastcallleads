@@ -124,7 +124,16 @@ export default function RoiCalculator() {
             </div>
             <a
               href="#pricing"
-              className="mt-4 flex items-center justify-center gap-2 rounded-lg bg-amber py-3 font-mono text-xs font-semibold tracking-[0.12em] text-[#140b0e] transition-transform hover:scale-[1.02]"
+              onClick={(e) => {
+                const target =
+                  document.getElementById("act-allocation") ?? document.getElementById("pricing");
+                if (target) {
+                  e.preventDefault();
+                  target.scrollIntoView({ behavior: "smooth", block: "start" });
+                  window.history.replaceState(null, "", "#pricing");
+                }
+              }}
+              className="mt-4 flex items-center justify-center gap-2 rounded-lg bg-amber py-3 font-mono text-xs font-semibold tracking-[0.12em] text-[#140b0e] transition-transform hover:scale-[1.02] active:scale-[0.98]"
             >
               START 7-DAY FREE TRIAL <ArrowRight className="h-4 w-4" />
             </a>

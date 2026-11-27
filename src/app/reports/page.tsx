@@ -1,10 +1,8 @@
 import Link from "next/link";
 import { ArrowRight, Newspaper } from "lucide-react";
 import type { Metadata } from "next";
-import { db } from "@/db";
 import { ensureSchema } from "@/db/bootstrap";
-import { sql } from "drizzle-orm";
-import { events } from "@/db/schema";
+import { getGenuineNewFilingsByState } from "@/lib/real-stats";
 import { LIVE_MARKETS } from "@/lib/states";
 import Reveal from "@/components/reveal";
 import { Footer, Nav } from "@/components/ui";
@@ -19,15 +17,10 @@ export const metadata: Metadata = {
 };
 
 export default async function ReportsIndex() {
-  const counts = new Map<string, number>();
+  let counts = new Map<string, number>();
   try {
     await ensureSchema();
-    const rows = await db
-      .select({ state: events.state, n: sql<number>`count(*)::int` })
-      .from(events)
-      .where(sql`${events.occurredAt} > now() - interval '7 days'`)
-      .groupBy(events.state);
-    for (const r of rows) counts.set(r.state, r.n);
+    counts = await getGenuineNewFilingsByState(7);
   } catch {
     // render zeros cleanly when DB initializing
   }

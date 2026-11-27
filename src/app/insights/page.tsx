@@ -4,7 +4,8 @@ import type { Metadata } from "next";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { ensureSchema } from "@/db/bootstrap";
-import { events, licenses } from "@/db/schema";
+import { licenses } from "@/db/schema";
+import { getGenuineNewFilingsByState } from "@/lib/real-stats";
 import Reveal from "@/components/reveal";
 import { Footer, Nav } from "@/components/ui";
 
@@ -35,25 +36,21 @@ export default async function InsightsIndex() {
   try {
     await ensureSchema();
     // Single GROUP BY pair instead of 22 sequential per-state queries.
-    const [pendingRows, filingRows] = await Promise.all([
+    const [pendingRows, filings30Map] = await Promise.all([
       db
         .select({ state: licenses.state, n: sql<number>`count(*)::int` })
         .from(licenses)
         .where(sql`${licenses.kind} = 'pending'`)
         .groupBy(licenses.state),
-      db
-        .select({ state: events.state, n: sql<number>`count(*)::int` })
-        .from(events)
-        .where(sql`${events.occurredAt} > now() - interval '30 days'`)
-        .groupBy(events.state),
+      getGenuineNewFilingsByState(30),
     ]);
 
     for (const r of pendingRows) {
       stats.set(r.state, { pending: r.n, filings30: 0 });
     }
-    for (const r of filingRows) {
-      const prev = stats.get(r.state) ?? { pending: 0, filings30: 0 };
-      stats.set(r.state, { pending: prev.pending, filings30: r.n });
+    for (const [st, n] of filings30Map.entries()) {
+      const prev = stats.get(st) ?? { pending: 0, filings30: 0 };
+      stats.set(st, { pending: prev.pending, filings30: n });
     }
   } catch {
     // render zeros gracefully when DB is empty

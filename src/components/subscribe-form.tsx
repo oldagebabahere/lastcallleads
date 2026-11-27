@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ArrowRight, CheckCircle2, LoaderCircle } from "lucide-react";
 import StatePicker from "@/components/state-picker";
 import { LIVE_STATE_SET } from "@/lib/states";
@@ -22,6 +22,7 @@ export default function SubscribeForm({
   const [states, setStates] = useState<string[]>([initialSt]);
   const [phase, setPhase] = useState<Phase>("idle");
   const [message, setMessage] = useState("");
+  const emailInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const qsState = (new URLSearchParams(window.location.search).get("state") ?? "")
@@ -30,7 +31,26 @@ export default function SubscribeForm({
     if (qsState && LIVE_STATE_SET.has(qsState) && qsState !== initialSt) {
       queueMicrotask(() => setStates([qsState]));
     }
-  }, [initialSt]);
+
+    const onPickState = (ev: Event) => {
+      const code = (ev as CustomEvent<{ state?: string }>).detail?.state
+        ?.trim()
+        .toUpperCase();
+      if (!code || !LIVE_STATE_SET.has(code)) return;
+      setStates((prev) => {
+        if (maxStates === 1) return [code];
+        if (prev.includes(code)) return prev;
+        if (prev.length >= maxStates) return [...prev.slice(1), code];
+        return [...prev, code];
+      });
+      if (plan === "solo") {
+        window.setTimeout(() => emailInputRef.current?.focus({ preventScroll: true }), 420);
+      }
+    };
+
+    window.addEventListener("lcl:pick-state", onPickState);
+    return () => window.removeEventListener("lcl:pick-state", onPickState);
+  }, [initialSt, maxStates, plan]);
 
   function toggleState(s: string) {
     setStates((prev) => {
@@ -108,7 +128,7 @@ export default function SubscribeForm({
   return (
     <form onSubmit={onSubmit} className="space-y-3">
       <div>
-        <p className="font-mono text-[10px] tracking-[0.18em] opacity-75">
+        <p className="font-mono text-[10px] font-semibold tracking-[0.18em] opacity-80">
           {plan === "solo" ? "PICK YOUR STATE" : "PICK UP TO 3 STATES"}
         </p>
         <div className="mt-2">
@@ -122,6 +142,7 @@ export default function SubscribeForm({
       </div>
       <div className="flex gap-2">
         <input
+          ref={emailInputRef}
           type="email"
           required
           value={email}
@@ -131,7 +152,7 @@ export default function SubscribeForm({
         />
         <button
           type="submit"
-          className="flex shrink-0 items-center gap-1.5 rounded-md bg-amber px-4 py-2.5 font-mono text-[11px] font-semibold tracking-[0.12em] text-[#140b0e] transition-transform hover:scale-[1.03] disabled:opacity-60"
+          className="flex shrink-0 items-center gap-1.5 rounded-md bg-amber px-4 py-2.5 font-mono text-[11px] font-semibold tracking-[0.12em] text-[#140b0e] transition-transform hover:scale-[1.02] active:scale-[0.98] disabled:opacity-60"
           disabled={phase === "sending"}
         >
           {phase === "sending" ? (
@@ -144,12 +165,12 @@ export default function SubscribeForm({
         </button>
       </div>
       <div className="flex items-center justify-between gap-2 text-[11px]">
-        <span className="font-mono text-[10px] opacity-70">7 days free · no card</span>
+        <span className="font-mono text-[10px] opacity-75">7 days free · no card</span>
         <button
           type="button"
           disabled={phase === "sending" || !email.includes("@")}
           onClick={() => void submitFlow(true)}
-          className="font-mono text-[10px] underline underline-offset-2 opacity-75 transition-opacity hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-40"
+          className="font-mono text-[10px] underline underline-offset-2 opacity-80 transition-opacity hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-40"
         >
           Skip trial &amp; subscribe now
         </button>

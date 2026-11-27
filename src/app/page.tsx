@@ -10,6 +10,7 @@ import RoiCalculator from "@/components/roi-calculator";
 import SubscribeForm from "@/components/subscribe-form";
 import CountUp from "@/components/count-up";
 import BottleStage from "@/components/bottle-stage";
+import { ClaimSeatButton, ScrollToPricingLink } from "@/components/claim-seat-button";
 import { LogoMark } from "@/components/logo";
 import { Footer, LeadRow, Nav } from "@/components/ui";
 import { embargoCutoff, getRecentEvents, getSiteStats, maskName } from "@/lib/queries";
@@ -242,7 +243,7 @@ export default async function Home() {
           <span className="hidden shrink-0 sm:block">FOR DISTRIBUTORS · BREWERIES · SPIRITS REPS</span>
         </div>
 
-        <h1 className="parallax parallax-soft pointer-events-none relative z-20 mt-4 select-none text-center lg:mt-0">
+        <h1 className="pointer-events-none relative z-20 mt-4 select-none text-center lg:mt-0">
           <span className="hero-giant block text-[15vw] sm:text-[11.5vw] lg:text-[8.6rem]">NEW BARS</span>
           <span className="hero-giant stroke block text-[15vw] sm:text-[11.5vw] lg:text-[8.6rem]">BEFORE THEY</span>
           <span className="hero-giant block text-[15vw] sm:text-[11.5vw] lg:text-[8.6rem]">
@@ -252,7 +253,7 @@ export default async function Home() {
 
         <div className="relative z-30 mx-auto mt-10 max-w-2xl text-center lg:mt-20">
           <div
-            className="hero-fade mx-auto mb-4 inline-flex items-center gap-2.5 rounded-full border border-wine2/25 bg-white/75 px-4 py-1.5 shadow-sm backdrop-blur-md"
+            className="hero-fade hero-pill mx-auto mb-4 inline-flex items-center gap-2.5 rounded-full border border-wine2/25 bg-white/75 px-4 py-1.5 shadow-sm backdrop-blur-md"
             style={{ animationDelay: "120ms" }}
           >
             <LogoMark className="h-5 w-5 rounded-full border border-amber/60" />
@@ -276,10 +277,10 @@ export default async function Home() {
             className="hero-fade mt-7 flex flex-wrap items-center justify-center gap-3.5"
             style={{ animationDelay: "480ms" }}
           >
-            <Link href="#act-allocation" className="btn-mint magnetic px-8 py-4 text-sm">
+            <ScrollToPricingLink className="btn-mint px-8 py-4 text-sm">
               Claim Your Territory — 7-Day Free Trial
               <ArrowRight className="h-4 w-4" />
-            </Link>
+            </ScrollToPricingLink>
             <Link href="/map" className="btn-ghost-ink px-6 py-4 text-sm">
               <MapPin className="h-4 w-4 text-wine2" />
               Live Territory Map
@@ -351,7 +352,7 @@ export default async function Home() {
       <section id="act-window" className="act-dark relative flex min-h-screen items-center px-5 py-24">
         <div className="mx-auto w-full max-w-6xl">
           <Reveal className="ml-auto w-full max-w-xl lg:mr-[7%]">
-            <div className="act-panel parallax p-8 sm:p-10">
+            <div className="act-panel p-8 sm:p-10">
               <p className="eyebrow">[ Act 2 — The window ]</p>
               <h2 className="mt-5 font-display text-4xl font-medium leading-[1.05] tracking-tight text-cream sm:text-5xl">
                 Well pours, wine lists &amp; tap handles get decided before opening night.
@@ -394,7 +395,7 @@ export default async function Home() {
       <section id="act-machine" className="act-dark relative flex min-h-screen items-center px-5 py-24">
         <div className="mx-auto w-full max-w-6xl">
           <Reveal className="w-full max-w-xl lg:ml-[7%]">
-            <div className="act-panel parallax p-8 sm:p-10">
+            <div className="act-panel p-8 sm:p-10">
               <p className="eyebrow">[ Act 3 — The beverage dossier ]</p>
               <h2 className="mt-5 font-display text-4xl font-medium leading-[1.05] tracking-tight text-cream sm:text-5xl">
                 Every lead arrives <span className="accent-serif text-amber">ready to work.</span>
@@ -470,7 +471,7 @@ export default async function Home() {
       >
         <div className="mx-auto w-full max-w-6xl">
           <Reveal>
-            <div className="act-panel-cream parallax mx-auto max-w-3xl p-8 sm:p-10">
+            <div className="act-panel-cream mx-auto max-w-3xl p-8 sm:p-10">
               <p className="eyebrow-ink">[ Act 4 — Beverage program fit ]</p>
               <h2 className="mt-5 font-display text-3xl font-medium tracking-tight sm:text-4xl">
                 Know what they will buy before you dial the first number.
@@ -532,8 +533,10 @@ export default async function Home() {
         <Reveal delay={120} className="relative">
           <div className="alloc-row mx-auto mt-16 grid max-w-5xl grid-cols-1 text-inkread md:grid-cols-3">
             {/* SCOUT */}
-            <div className="alloc-cell flex flex-col">
-              <p className="font-mono text-[11px] tracking-[0.2em] text-inkread/65">SCOUT</p>
+            <div className="alloc-cell flex flex-col rounded-t-[20px] md:rounded-l-[20px] md:rounded-tr-none">
+              <p className="font-mono text-[11px] font-semibold tracking-[0.2em] text-inkread/65">
+                SCOUT
+              </p>
               <p className="mt-4 font-display text-5xl font-light">$0</p>
               <p className="mt-1 font-mono text-[10px] tracking-[0.15em] text-inkread/55">
                 FOREVER FREE
@@ -545,7 +548,7 @@ export default async function Home() {
               </ul>
               <Link
                 href="/sample"
-                className="btn-ghost-ink mt-auto justify-center py-2.5 font-mono text-[11px] tracking-[0.12em]"
+                className="btn-ghost-ink mt-8 justify-center py-3 font-mono text-[11px] font-semibold tracking-[0.12em]"
               >
                 VIEW SAMPLE DOSSIER
               </Link>
@@ -553,29 +556,20 @@ export default async function Home() {
 
             {/* TERRITORY */}
             <div className="alloc-cell alloc-featured relative flex flex-col">
-              <span className="absolute left-1/2 top-0 z-10 -translate-x-1/2 -translate-y-1/2 rounded-full bg-mint px-3 py-1 font-mono text-[9px] font-bold tracking-[0.2em] text-[#06231a]">
+              <span className="absolute left-1/2 top-0 z-20 -translate-x-1/2 -translate-y-1/2 whitespace-nowrap rounded-full bg-mint px-3.5 py-1 font-mono text-[9px] font-bold tracking-[0.2em] text-[#06231a] shadow-md">
                 MOST PICKED
               </span>
-              <div id="dock-slot" className="dock-slot flex h-40 items-center justify-center md:h-44">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  id="slot-bottle"
-                  src="/bottle.webp"
-                  alt="Last Call Leads bottle"
-                  width={306}
-                  height={1200}
-                  className="slot-bottle h-36 w-auto md:h-40"
-                />
-              </div>
-              <p className="mt-5 font-mono text-[11px] tracking-[0.2em] text-wine2">TERRITORY</p>
-              <p className="mt-3 font-display text-5xl font-light">$129</p>
-              <p className="mt-1 font-mono text-[10px] tracking-[0.15em] text-inkread/55">
+              <p className="font-mono text-[11px] font-semibold tracking-[0.2em] text-wine2">
+                TERRITORY
+              </p>
+              <p className="mt-4 font-display text-5xl font-light">$129</p>
+              <p className="mt-1 font-mono text-[10px] tracking-[0.15em] text-inkread/60">
                 PER MONTH · 1 LIVE MARKET
               </p>
               <p className="mt-3 inline-block rounded-md bg-amber/25 px-3 py-2 font-mono text-[10px] font-semibold tracking-[0.1em] text-wine2">
                 ✓ 7-day free trial · no card · capped at 5 seats/state
               </p>
-              <ul className="mt-5 flex-1 space-y-3 text-sm text-inkread/80">
+              <ul className="mt-6 flex-1 space-y-3 text-sm text-inkread/85">
                 <li>
                   · <strong>1 live market</strong> of your choice
                 </li>
@@ -587,14 +581,14 @@ export default async function Home() {
                 <li>· 19-column CRM CSV + pitch scripts</li>
                 <li>· ZIP &amp; venue-type filtering · cancel anytime</li>
               </ul>
-              <div className="mt-7">
+              <div className="mt-8">
                 <SubscribeForm plan="solo" />
               </div>
             </div>
 
             {/* MULTI-STATE PRO */}
-            <div className="alloc-cell relative flex flex-col border-amber/50 bg-amber/[0.06]">
-              <span className="absolute left-1/2 top-0 z-10 -translate-x-1/2 -translate-y-1/2 rounded-full bg-amber px-3 py-1 font-mono text-[9px] font-bold tracking-[0.2em] text-[#140b0e]">
+            <div className="alloc-cell relative flex flex-col rounded-b-[20px] bg-amber/[0.06] md:rounded-r-[20px] md:rounded-bl-none">
+              <span className="absolute left-1/2 top-0 z-20 -translate-x-1/2 -translate-y-1/2 whitespace-nowrap rounded-full bg-amber px-3.5 py-1 font-mono text-[9px] font-bold tracking-[0.2em] text-[#140b0e] shadow-md">
                 BEST VALUE · SAVE 36%
               </span>
               <p className="font-mono text-[11px] font-semibold tracking-[0.2em] text-wine2">
@@ -801,12 +795,10 @@ export default async function Home() {
                           {n > 0 ? `${n.toLocaleString()} records` : m.agency}
                         </span>
                       </div>
-                      <a
-                        href="#act-allocation"
+                      <ClaimSeatButton
+                        stateCode={m.code}
                         className="shrink-0 rounded-full border border-wine2/35 bg-wine2/10 px-2.5 py-0.5 font-mono text-[9px] font-semibold tracking-[0.12em] text-wine2 transition-colors hover:bg-wine2 hover:text-cream"
-                      >
-                        CLAIM SEAT →
-                      </a>
+                      />
                     </div>
                   );
                 })}
@@ -1028,9 +1020,9 @@ export default async function Home() {
           <p className="mx-auto mt-6 max-w-md text-base text-cream/75">
             Be first at the door with street address, LLC entity, beverage fit &amp; pitch script.
           </p>
-          <Link href="#act-allocation" className="btn-mint magnetic mt-10 px-9 py-4 text-base">
+          <ScrollToPricingLink className="btn-mint mt-10 px-9 py-4 text-base">
             Start 7-day free trial <ArrowRight className="h-4 w-4" />
-          </Link>
+          </ScrollToPricingLink>
         </Reveal>
       </section>
 

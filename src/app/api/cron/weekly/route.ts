@@ -10,9 +10,10 @@ import { reprobeAndHealPaused } from "@/lib/ingest-aggregator";
 import { runMaintenance } from "@/lib/maintenance";
 import { runBriefings, runMonthlyRecaps } from "@/lib/digest";
 import { runDbBackup } from "@/lib/owner-tasks";
+import { getGenuineNewFilingsByState } from "@/lib/real-stats";
 import { sendOpsAlert } from "@/lib/pourwatch";
 import { db } from "@/db";
-import { emailLog, events, prospects, venueReceipts } from "@/db/schema";
+import { emailLog, prospects, venueReceipts } from "@/db/schema";
 import { and, gt, sql } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
@@ -69,12 +70,8 @@ export async function GET(req: Request) {
   // 5) Owner recap email.
   let opsRecap = "skipped";
   try {
-    const weekAgo = new Date(Date.now() - 7 * 86_400_000);
-    const [filings, pool, topVenue] = await Promise.all([
-      db
-        .select({ n: sql<number>`count(*)::int` })
-        .from(events)
-        .where(gt(events.detectedAt, weekAgo)),
+    const [weekMap, pool, topVenue] = await Promise.all([
+      getGenuineNewFilingsByState(7),
       db
         .select({ state: prospects.state, n: sql<number>`count(*)::int` })
         .from(prospects)
@@ -89,6 +86,7 @@ export async function GET(req: Request) {
         .orderBy(sql`period_end desc, total desc`)
         .limit(1),
     ]);
+    const realWeekTotal = [...weekMap.values()].reduce((a, b) => a + b, 0);
     const poolStates = pool
       .filter((r) => r.n >= 20)
       .map((r) => r.state)
@@ -100,7 +98,7 @@ export async function GET(req: Request) {
 
     opsRecap = (await sendOpsAlert(
       "Weekly recap — your machine ran itself",
-      `<p><strong>This week:</strong> ${Number(filings[0]?.n ?? 0).toLocaleString()} new filings ingested.</p>
+      `<p><strong>This week:</strong> ${realWeekTotal.toLocaleString()} genuine new venue filings across ${weekMap.size} states.</p>
        <p><strong>PourWatch self-healing:</strong> ${reprobed.length} paused source(s) re-probed.</p>
        <p><strong>Outreach rotation:</strong> this week&apos;s state is <strong>${rotation}</strong>${poolStates.length ? ` (pool: ${poolStates.join(", ")})` : " — prospect pool growing automatically"}.</p>
        ${topVenue[0]?.name ? `<p><strong>Top TX venue by revenue:</strong> ${topVenue[0].name} (${topVenue[0].city ?? "TX"}) — $${Math.round(topVenue[0].total ?? 0).toLocaleString()}/mo.</p>` : ""}`

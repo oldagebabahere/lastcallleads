@@ -117,16 +117,32 @@ export function Nav() {
     };
   }, [open]);
 
+  const handlePricingJump = (e: React.MouseEvent<HTMLAnchorElement>, closeMenu = false) => {
+    if (closeMenu) setOpen(false);
+    if (typeof window !== "undefined" && window.location.pathname === "/") {
+      const target =
+        document.getElementById("act-allocation") ?? document.getElementById("pricing");
+      if (target) {
+        e.preventDefault();
+        window.setTimeout(
+          () => target.scrollIntoView({ behavior: "smooth", block: "start" }),
+          closeMenu ? 80 : 0
+        );
+        window.history.replaceState(null, "", "#pricing");
+      }
+    }
+  };
+
   return (
     <>
       <header
-        className={`fixed inset-x-0 top-0 z-50 border-b border-black/30 bg-frame text-cream backdrop-blur-xl transition-shadow duration-500 ${
+        className={`fixed inset-x-0 top-0 z-50 border-b border-black/30 bg-frame text-cream backdrop-blur-xl transition-shadow duration-300 ${
           scrolled ? "shadow-[0_18px_50px_-25px_rgba(0,0,0,0.85)]" : ""
         }`}
       >
         <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3 sm:px-5 sm:py-3.5">
           <Link href="/" className="group flex items-center gap-3 text-cream">
-            <span className="logo-neon flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-amber/50 bg-ink shadow-[0_0_22px_-6px_rgba(229,176,80,0.55)] transition-all duration-500 group-hover:scale-[1.04] group-hover:border-amber">
+            <span className="logo-neon flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-amber/50 bg-ink shadow-[0_0_22px_-6px_rgba(229,176,80,0.55)] transition-all duration-300 group-hover:scale-[1.04] group-hover:border-amber">
               <LogoMark className="h-full w-full" />
             </span>
             <span className="leading-tight">
@@ -145,7 +161,7 @@ export function Nav() {
               <Link
                 key={l.href}
                 href={l.href}
-                className="rounded-full px-3.5 py-1.5 text-smoke transition-all duration-300 hover:border hover:border-white/25 hover:bg-white/5 hover:text-cream"
+                className="rounded-full border border-transparent px-3.5 py-1.5 text-smoke transition-colors duration-200 hover:border-white/25 hover:bg-white/5 hover:text-cream"
               >
                 {l.label}
               </Link>
@@ -158,12 +174,13 @@ export function Nav() {
               onClick={toggleTheme}
               aria-label={dark ? "Switch homepage to light theme" : "Switch homepage to dark theme"}
               title={dark ? "Light theme" : "Dark theme"}
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-line text-smoke transition-colors hover:border-smoke hover:text-cream"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-line text-smoke transition-colors hover:border-smoke hover:text-cream active:scale-95"
             >
               {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </button>
             <Link
               href="/#pricing"
+              onClick={(e) => handlePricingJump(e, false)}
               className="btn-mint hidden px-3.5 py-2 font-mono text-[11px] tracking-[0.12em] sm:inline-flex"
             >
               GET ALERTS
@@ -172,7 +189,7 @@ export function Nav() {
               type="button"
               onClick={() => setOpen(true)}
               aria-label="Open menu"
-              className="flex h-9 w-9 items-center justify-center rounded-md border border-line text-smoke transition-colors hover:border-smoke hover:text-cream lg:hidden"
+              className="flex h-9 w-9 items-center justify-center rounded-md border border-line text-smoke transition-colors hover:border-smoke hover:text-cream active:scale-95 lg:hidden"
             >
               <Menu className="h-4 w-4" />
             </button>
@@ -181,7 +198,7 @@ export function Nav() {
       </header>
 
       <div
-        className={`fixed inset-0 z-[70] transition-all duration-500 lg:hidden ${
+        className={`fixed inset-0 z-[70] transition-all duration-300 lg:hidden ${
           open ? "visible opacity-100" : "invisible opacity-0"
         }`}
       >
@@ -209,11 +226,13 @@ export function Nav() {
               <Link
                 key={l.href}
                 href={l.href}
-                onClick={() => setOpen(false)}
-                className={`border-b border-line/50 py-4 font-display text-2xl font-medium text-cream/90 transition-all duration-500 hover:pl-2 hover:text-amber ${
+                onClick={(e) =>
+                  l.href === "/#pricing" ? handlePricingJump(e, true) : setOpen(false)
+                }
+                className={`border-b border-line/50 py-4 font-display text-2xl font-medium text-cream/90 transition-all duration-300 hover:pl-2 hover:text-amber ${
                   open ? "translate-y-0 opacity-100" : "translate-y-4 opacity-0"
                 }`}
-                style={{ transitionDelay: `${60 + i * 40}ms` }}
+                style={{ transitionDelay: `${30 + i * 20}ms` }}
               >
                 {l.label}
               </Link>
@@ -221,7 +240,7 @@ export function Nav() {
           </nav>
           <Link
             href="/#pricing"
-            onClick={() => setOpen(false)}
+            onClick={(e) => handlePricingJump(e, true)}
             className="btn-mint mt-6 w-full justify-center px-6 py-4 text-sm"
           >
             Start 7-day free trial
@@ -389,9 +408,24 @@ export function LeadRow({ e, locked }: { e: FilingEvent; locked: boolean }) {
     summary: e.summary,
   });
   const isPriority = score.value >= 70;
+
+  const handleLockedClick = (ev: React.MouseEvent<HTMLAnchorElement>) => {
+    if (!locked) return;
+    if (typeof window !== "undefined" && window.location.pathname === "/") {
+      const target =
+        document.getElementById("act-allocation") ?? document.getElementById("pricing");
+      if (target) {
+        ev.preventDefault();
+        target.scrollIntoView({ behavior: "smooth", block: "start" });
+        window.history.replaceState(null, "", "#pricing");
+      }
+    }
+  };
+
   return (
     <Link
       href={locked ? "/#pricing" : `/feed/${e.id}`}
+      onClick={handleLockedClick}
       className="group grid grid-cols-[86px_1fr_auto] items-center gap-3 border-b border-line/70 px-4 py-3 transition-colors hover:bg-panel sm:grid-cols-[96px_80px_1fr_52px_auto] sm:gap-4"
     >
       <span className="font-mono text-[11px] text-faint">{fmtDate(e.occurredAt)}</span>

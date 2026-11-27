@@ -56,6 +56,12 @@ html {
   scroll-behavior: smooth;
 }
 
+button:not(:disabled),
+[role="button"],
+summary {
+  cursor: pointer;
+}
+
 body {
   background: var(--color-ink);
   color: var(--color-cream);
@@ -67,7 +73,6 @@ body {
   background-image:
     radial-gradient(1100px 560px at 50% -10%, rgba(122, 43, 62, 0.24), transparent 62%),
     radial-gradient(900px 520px at 100% 18%, rgba(224, 170, 74, 0.06), transparent 58%);
-  background-attachment: fixed;
 }
 
 /* Homepage light-editorial canvas (toggled cleanly by [data-theme="dark"]). */
@@ -122,16 +127,9 @@ body::before {
   background: #9c8a75;
 }
 
-/* film grain over everything, very subtle */
+/* film grain disabled for locked 120fps compositor scrolling */
 .grain::before {
-  content: "";
-  position: fixed;
-  inset: -50%;
-  z-index: 60;
-  pointer-events: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
-  opacity: 0.05;
-  mix-blend-mode: overlay;
+  display: none;
 }
 
 /* soft glows */
@@ -407,14 +405,14 @@ body.intro-lock .hero-fade {
   color: var(--color-inkread);
 }
 
-/* allocation row — light glass cards on the paper world */
+/* allocation row — light glass cards on the paper world (overflow visible so top pills never clip) */
 .alloc-row {
-  border: 1px solid rgba(36, 16, 22, 0.12);
+  border: 1px solid rgba(36, 16, 22, 0.14);
   border-radius: 20px;
-  overflow: hidden;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.3));
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
+  overflow: visible;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.62), rgba(255, 255, 255, 0.36));
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   box-shadow: 0 26px 70px -38px rgba(60, 26, 34, 0.45);
 }
 .alloc-cell {
@@ -525,7 +523,7 @@ body.intro-lock .hero-fade {
   pointer-events: none;
 }
 
-/* slow-drifting aurora blobs */
+/* static ambient aurora blobs (zero continuous GPU blur repaint) */
 .aurora {
   position: absolute;
   inset: 0;
@@ -535,9 +533,8 @@ body.intro-lock .hero-fade {
 .aurora span {
   position: absolute;
   border-radius: 999px;
-  filter: blur(90px);
-  opacity: 0.55;
-  animation: aurora-drift 22s ease-in-out infinite alternate;
+  filter: blur(64px);
+  opacity: 0.45;
 }
 .aurora span:nth-child(1) {
   width: 44vw;
@@ -650,13 +647,16 @@ body.intro-lock .hero-fade {
   background: var(--color-mint);
   color: #06231a;
   font-weight: 600;
-  transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1), background 0.3s ease, box-shadow 0.3s ease;
+  transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1), background 0.22s ease, box-shadow 0.22s ease;
   box-shadow: 0 10px 34px -12px rgba(47, 169, 132, 0.65);
 }
 .btn-mint:hover {
   transform: translateY(-2px) scale(1.02);
   background: var(--color-mint-bright);
   box-shadow: 0 16px 44px -12px rgba(78, 212, 171, 0.8);
+}
+.btn-mint:active {
+  transform: translateY(0) scale(0.98);
 }
 
 /* ghost secondary button (dark surfaces) */
@@ -996,15 +996,14 @@ body.intro-lock .hero-fade {
 [data-theme="dark"] .section-cream,
 [data-theme="dark"] .section-sage,
 [data-theme="dark"] .theme-flip {
-  --color-ink: #f6eee1;
-  --color-inkread: #f0e2d2;
-  --color-line: #453236;
-  --color-faint: #97838a;
+  --color-inkread: #f2e6d8;
+  --color-line: #3c292d;
+  --color-faint: #a38f95;
   --color-paper: #100b0e;
   --color-sand: #171013;
   --color-cream-bg: #171013;
   --color-sage: #151013;
-  --color-creamcard: #241820;
+  --color-creamcard: #1d1218;
 }
 
 [data-theme="dark"] body {
@@ -1012,7 +1011,38 @@ body.intro-lock .hero-fade {
     radial-gradient(1000px 560px at 100% 14%, rgba(164, 67, 90, 0.1), transparent 58%),
     radial-gradient(900px 620px at 0% 46%, rgba(164, 67, 90, 0.07), transparent 60%),
     #100b0e;
-  background-attachment: fixed;
+}
+
+[data-theme="dark"] .hero-pill {
+  background: rgba(26, 15, 20, 0.85);
+  border-color: rgba(229, 176, 80, 0.35);
+}
+
+[data-theme="dark"] .hero-giant .stroke {
+  -webkit-text-stroke: 1.5px rgba(246, 238, 225, 0.35);
+}
+
+[data-theme="dark"] .hero-rail {
+  color: rgba(246, 238, 225, 0.45);
+}
+
+[data-theme="dark"] .eyebrow-ink {
+  color: var(--color-amber);
+}
+
+[data-theme="dark"] .btn-ghost-ink {
+  border-color: rgba(246, 238, 225, 0.24);
+  background: rgba(246, 238, 225, 0.05);
+  color: var(--color-cream);
+}
+[data-theme="dark"] .btn-ghost-ink:hover {
+  border-color: rgba(229, 176, 80, 0.6);
+  background: rgba(229, 176, 80, 0.12);
+  color: #ffffff;
+}
+
+:where([data-theme="dark"] .theme-flip) .text-wine2 {
+  color: #e89aa8;
 }
 
 [data-theme="dark"] .act-light {

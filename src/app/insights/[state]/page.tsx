@@ -10,6 +10,7 @@ import { ensureSchema } from "@/db/bootstrap";
 import { Footer, Nav } from "@/components/ui";
 import { BRAND } from "@/lib/brand";
 import { daysAgoDate } from "@/lib/queries";
+import { getGenuineNewFilingsByState } from "@/lib/real-stats";
 
 export const dynamic = "force-dynamic";
 
@@ -59,14 +60,14 @@ export default async function StateDeskPage({
 
   try {
     await ensureSchema();
-    const [kpi, byType, byCounty, byWeek, topCities] = await Promise.all([
+    const [kpi, map7, map30, byType, byCounty, byWeek, topCities] = await Promise.all([
       db.execute(sql`
         SELECT
           (SELECT count(*) FROM licenses WHERE state = ${d.code} AND kind = 'pending')::int AS pending,
-          (SELECT count(*) FROM licenses WHERE state = ${d.code} AND kind = 'active')::int AS active,
-          (SELECT count(*) FROM events WHERE state = ${d.code} AND occurred_at > now() - interval '7 days')::int AS filings7,
-          (SELECT count(*) FROM events WHERE state = ${d.code} AND occurred_at > now() - interval '30 days')::int AS filings30
+          (SELECT count(*) FROM licenses WHERE state = ${d.code} AND kind = 'active')::int AS active
       `),
+      getGenuineNewFilingsByState(7),
+      getGenuineNewFilingsByState(30),
       db.execute(sql`
         SELECT type_name AS label, count(*)::int AS n
         FROM licenses
@@ -77,24 +78,36 @@ export default async function StateDeskPage({
         SELECT county AS label, count(*)::int AS n
         FROM events
         WHERE state = ${d.code} AND county IS NOT NULL AND county <> ''
+          AND event_type IN ('NEW_PENDING', 'NEW_LICENSE')
           AND occurred_at > now() - interval '90 days'
+          AND occurred_at <= now() + interval '1 day'
         GROUP BY county ORDER BY n DESC LIMIT 10
       `),
       db.execute(sql`
         SELECT date_trunc('week', occurred_at) AS wk, count(*)::int AS n
         FROM events
-        WHERE state = ${d.code} AND occurred_at > now() - interval '8 weeks'
+        WHERE state = ${d.code}
+          AND event_type IN ('NEW_PENDING', 'NEW_LICENSE')
+          AND occurred_at > now() - interval '8 weeks'
+          AND occurred_at <= now() + interval '1 day'
         GROUP BY 1 ORDER BY 1
       `),
       db.execute(sql`
         SELECT city AS label, count(*)::int AS n
         FROM events
         WHERE state = ${d.code} AND city IS NOT NULL AND city <> ''
+          AND event_type IN ('NEW_PENDING', 'NEW_LICENSE')
         GROUP BY city ORDER BY n DESC LIMIT 8
       `),
     ]);
 
-    k = (kpi.rows[0] ?? {}) as typeof k;
+    const baseKpi = (kpi.rows[0] ?? {}) as { pending?: number; active?: number };
+    k = {
+      pending: baseKpi.pending ?? 0,
+      active: baseKpi.active ?? 0,
+      filings7: map7.get(d.code) ?? 0,
+      filings30: map30.get(d.code) ?? 0,
+    };
     typeRows = byType.rows as unknown as Row[];
     countyRows = byCounty.rows as unknown as Row[];
     weekRows = (byWeek.rows as unknown as { wk: string | Date; n: number }[]).map((r) => ({

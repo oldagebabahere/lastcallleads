@@ -12,6 +12,7 @@ import { alertFrom, isOwnerAddress } from "@/lib/email";
 import { isMailTransportConfigured, sendTransactionalMail } from "@/lib/mailer";
 import { publishLinkedInOfficial, sendTelegramOwner } from "@/lib/notify";
 import { formatStateNames, stateFullName } from "@/lib/states";
+import { getGenuineNewFilingsByState } from "@/lib/real-stats";
 import { checkoutUpgradeUrl, exportUrl, prefsUrl, scopedToken, unsubscribeUrls } from "@/lib/unsubscribe";
 
 function esc(s: string): string {
@@ -405,21 +406,14 @@ export async function buildSocialPost(): Promise<{
   detail: string;
   posted: string[];
 }> {
-  const week = await db
-    .select({ state: events.state, n: sql<number>`count(*)::int` })
-    .from(events)
-    .where(
-      and(
-        gt(events.detectedAt, new Date(Date.now() - 7 * 86_400_000)),
-        or(isNull(events.licenseKey), notLike(events.licenseKey, "TTB-%"))
-      )
-    )
-    .groupBy(events.state)
-    .orderBy(desc(sql`count(*)`))
-    .limit(5);
-
-  const total = week.reduce((a, b) => a + b.n, 0);
-  if (!week.length) {
+  const byStateMap = await getGenuineNewFilingsByState(7);
+  const allWeek = [...byStateMap.entries()]
+    .filter(([, n]) => n > 0)
+    .map(([state, n]) => ({ state, n }))
+    .sort((a, b) => b.n - a.n);
+  const week = allWeek.slice(0, 5);
+  const total = allWeek.reduce((a, b) => a + b.n, 0);
+  if (!week.length || total === 0) {
     return { sent: false, detail: "no filings this week", posted: [] };
   }
 
@@ -448,7 +442,7 @@ export async function buildSocialPost(): Promise<{
 
 By then, the well spirits are poured, the draft handles are signed, and the wine list is printed.
 
-This week alone, ${total.toLocaleString()} brand-new bars, restaurants & package stores filed official liquor license paperwork across ${week.length} US states:
+This week alone, ${total.toLocaleString()} brand-new bars, restaurants & package stores filed official liquor license paperwork across ${allWeek.length} US states:
 ${week.map((w) => `• ${stateFullName(w.state)}: ${w.n.toLocaleString()} new filings`).join("\n")}
 
 Every single filing is a verified commercial lease 60–90 days BEFORE opening night.
@@ -462,7 +456,7 @@ ${link}/sample
 
 #wineandspirits #craftbeer #beveragedistribution #hospitalitysales #bars #restaurants`;
 
-  const xRaw = `${total.toLocaleString()} new bar & restaurant liquor filings landed this week across ${week.length} states — every one is a buyer 60–90 days from opening.
+  const xRaw = `${total.toLocaleString()} new bar & restaurant liquor filings landed this week across ${allWeek.length} states — every one is a buyer 60–90 days from opening.
 
 We deliver them the morning they post.
 
@@ -585,7 +579,7 @@ ${link}`;
       <div style="max-width:680px;margin:auto;padding:36px 20px">
         <div style="font-size:11px;letter-spacing:0.25em;color:#e9a13b;text-transform:uppercase;font-family:monospace">${esc(BRAND.name)} · SOCIAL POST</div>
         <h1 style="font-size:24px;margin:12px 0">${posted.length ? `Auto-posted to ${esc(autoLabels)}.` : `Today's social post is ready.`}</h1>
-        <p style="color:#8d8375;font-size:13px;line-height:1.7">Generated from live database totals (${total.toLocaleString()} filings across ${week.length} states).</p>
+        <p style="color:#8d8375;font-size:13px;line-height:1.7">Generated from live database totals (${total.toLocaleString()} filings across ${allWeek.length} states).</p>
         ${parts.join("")}
         ${footerHtml()}
       </div>

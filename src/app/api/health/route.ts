@@ -11,6 +11,7 @@ import {
   isMailTransportConfigured,
 } from "@/lib/mailer";
 import { PUBLIC_CONFIG } from "@/lib/public-config";
+import { getGenuineNewFilingsByState } from "@/lib/real-stats";
 
 export const dynamic = "force-dynamic";
 
@@ -18,11 +19,13 @@ export async function GET(req: Request) {
   let dbOk = false;
   let pausedSources = 0;
   let lastIngestHoursAgo: number | null = null;
+  let filings7dTotal = 0;
+  let filings7dByState: Record<string, number> = {};
   const activeLabels = ALL_STATE_SOURCES.map((s) => s.label);
   try {
     await db.execute(sql`select 1`);
     dbOk = true;
-    const [pausedRow, latestRow] = await Promise.all([
+    const [pausedRow, latestRow, weekMap] = await Promise.all([
       db
         .select({ n: sql<number>`count(*)::int` })
         .from(sourceHealth)
@@ -38,6 +41,7 @@ export async function GET(req: Request) {
         .from(sourceHealth)
         .where(inArray(sourceHealth.source, activeLabels))
         .catch(() => [{ lastOk: null }]),
+      getGenuineNewFilingsByState(7).catch(() => new Map<string, number>()),
     ]);
     pausedSources = pausedRow[0]?.n ?? 0;
     if (latestRow[0]?.lastOk) {
@@ -46,6 +50,8 @@ export async function GET(req: Request) {
         Math.round((Date.now() - new Date(latestRow[0].lastOk).getTime()) / 3_600_000)
       );
     }
+    filings7dByState = Object.fromEntries(weekMap.entries());
+    filings7dTotal = [...weekMap.values()].reduce((a, b) => a + b, 0);
   } catch {
     dbOk = false;
   }
@@ -79,6 +85,8 @@ export async function GET(req: Request) {
       dodoReady: dodoConfigured(),
       pausedSources,
       lastIngestHoursAgo,
+      filings7dTotal,
+      filings7dByState,
       outreachActive: isAutoOutreachActive(),
       outreachAccounts,
       telegramReady: Boolean(process.env.TELEGRAM_BOT_TOKEN?.trim() && process.env.TELEGRAM_CHAT_ID?.trim()),
